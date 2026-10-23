@@ -1,0 +1,171 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: #13191d;
+  --color-surface: #1a2228;
+  --color-surface-hover: #1f2a32;
+  --color-primary: #00385a;
+  --color-primary-hover: #004d7a;
+  --color-primary-light: #0a5a8a;
+  --color-accent: #1a7abf;
+  --color-border: #242f38;
+  --color-text: #e8eef2;
+  --color-muted: #7a909f;
+  --color-tag-2d: #2a4a6b;
+  --color-tag-3d: #2a3d6b;
+  --color-tag-photo: #1e4d5a;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* overflow-x: clip soluciona el fallo del position: sticky */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #00385a transparent;
+  overflow-x: clip;
+}
+
+body {
+  background-color: #13191d;
+  color: #e8eef2;
+  font-family: 'DM Sans', sans-serif;
+  margin: 0;
+  padding: 0;
+  overflow-x: clip;
+}
+
+#root {
+  max-width: 100vw;
+  overflow-x: clip;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #00385a;
+  border-radius: 3px;
+}
+
+.font-display {
+  font-family: 'Playfair Display', serif;
+}
+
+/* Masonry layout */
+.masonry-grid {
+  columns: 5 220px;
+  column-gap: 12px;
+}
+
+@media (max-width: 1200px) {
+  .masonry-grid {
+    columns: 4 200px;
+  }
+}
+
+@media (max-width: 900px) {
+  .masonry-grid {
+    columns: 3 180px;
+  }
+}
+
+@media (max-width: 600px) {
+  .masonry-grid {
+    columns: 2 160px;
+  }
+}
+
+/* Search bar */
+.search-bar {
+  background: #1a2228;
+  border: 1.5px solid #242f38;
+  border-radius: 24px;
+  padding: 10px 20px;
+  color: #e8eef2;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 15px;
+  outline: none;
+  width: 100%;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.search-bar:focus {
+  border-color: #00385a;
+  box-shadow: 0 0 0 3px rgba(0, 56, 90, 0.25);
+}
+
+.search-bar::placeholder {
+  color: #7a909f;
+}
+
+/* Category pill */
+.cat-pill {
+  background: #1a2228;
+  border: 1.5px solid #242f38;
+  border-radius: 20px;
+  padding: 6px 16px;
+  color: #8da3b5;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  outline: none;
+}
+
+.cat-pill:hover {
+  border-color: #00385a;
+  color: #e8eef2;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.cat-pill.active {
+  background: #00385a;
+  border-color: #00385a;
+  color: #ffffff;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Tag badge */
+.tag-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-family: 'DM Sans', sans-serif;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.tag-2d {
+  background: rgba(42, 74, 107, 0.8);
+  color: #7db8e8;
+}
+.tag-3d {
+  background: #1d273a;
+  color: #688bfb;
+}
+.tag-photo {
+  background: #0f3138;
+  color: #2dd4bf;
+}
+.tag-edit {
+  background: #311b38;
+  color: #c084fc;
+}

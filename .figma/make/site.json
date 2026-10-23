@@ -1,0 +1,10 @@
+{
+  "description": "A platform for artists to share and organize 2D, 3D, and photographic artwork with customizable boards, profiles, and advanced search features.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
