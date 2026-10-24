@@ -69,9 +69,8 @@ app.get('/api/feed', (req, res) => {
   });
 });
 
-// ==========================================
+
 // FUNCIÓN AUXILIAR: Asegurar que el Pin exista en MySQL
-// ==========================================
 const ensurePublication = (pubId, pinData, callback) => {
   const externalId = String(pubId);
   const numericId = /^\d+$/.test(externalId) ? Number(externalId) : null;
@@ -110,9 +109,8 @@ const ensurePublication = (pubId, pinData, callback) => {
   });
 };
 
-// ==========================================
+
 // RUTAS DE TABLEROS Y PINES GUARDADOS
-// ==========================================
 
 app.get('/api/tableros/:usuarioId', (req, res) => {
   const { usuarioId } = req.params;
@@ -229,10 +227,8 @@ app.post('/api/tableros/guardar', (req, res) => {
   });
 });
 
-// ==========================================
-// RUTAS DE HISTORIAL
-// ==========================================
 
+// RUTAS DE HISTORIAL
 app.get('/api/historial/:usuarioId', (req, res) => {
   const { usuarioId } = req.params;
   const query = 'SELECT * FROM vista_historial_vista WHERE usuario_id = ? ORDER BY visto_at DESC LIMIT 50';
