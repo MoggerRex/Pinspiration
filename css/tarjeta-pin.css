@@ -1,0 +1,98 @@
+.masonry-item {
+  break-inside: avoid;
+  margin-bottom: 12px;
+  display: block;
+}
+
+.pin-card {
+  position: relative;
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #1a2228;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pin-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 56, 90, 0.4);
+}
+
+.pin-card .overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.0) 50%, rgba(0,0,0,0.7) 100%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.pin-card:hover .overlay {
+  opacity: 1;
+}
+
+.save-btn {
+  background: #00385a;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 8px 18px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  align-self: flex-end;
+}
+
+.save-btn:hover {
+  background: #004d7a;
+}
+
+/* El ícono de bookmark solo se usa en móvil */
+.save-icon {
+  display: none;
+}
+
+/* ─── Móvil: tarjeta compacta (categoría + bookmark) ─── */
+@media (max-width: 768px) {
+  /* Sin hover en táctil: la categoría y el bookmark siempre están visibles */
+  .pin-card:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  .pin-card .overlay {
+    padding: 8px;
+    /* degradado suave arriba para que se lean la categoría y el ícono */
+    background: linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 35%);
+  }
+
+  /* Quita título y artista */
+  .pin-info {
+    display: none;
+  }
+
+  /* Botón guardar: solo ícono, circular */
+  .save-label {
+    display: none;
+  }
+
+  .save-icon {
+    display: block;
+  }
+
+  .save-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 56, 90, 0.9);
+  }
+}

@@ -1,16 +1,29 @@
 <!doctype html>
-<html lang="<!-- figma:lang -->">
+<html lang="es">
   <head>
-    <!-- figma:head-start -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title><!-- figma:title --></title>
-    <!-- figma:head-end -->
+    <meta name="description" content="Pinspiration — Comparte y descubre el arte visual de artistas creativos." />
+    <title>Pinspiration</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="/css/global.css" />
+    <link rel="stylesheet" href="/css/login.css" />
+    <link rel="stylesheet" href="/css/barra-navegacion.css" />
+    <link rel="stylesheet" href="/css/tarjeta-pin.css" />
+    <link rel="stylesheet" href="/css/ventanas-flotantes.css" />
+    <link rel="stylesheet" href="/css/detalle-obra.css" />
   </head>
   <body>
-    <!-- figma:body-start -->
+    <!-- Contenedor principal de la SPA (migración desde React) -->
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-    <!-- figma:body-end -->
+
+    <script src="/js/api.js"></script>
+    <script src="/js/navegacion.js"></script>
+    <script src="/js/feed.js"></script>
+    <script src="/js/perfil.js"></script>
+    <script src="/js/tableros.js"></script>
+    <script src="/js/crear-pin.js"></script>
+    <script src="/js/login.js"></script>
   </body>
 </html>

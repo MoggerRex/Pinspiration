@@ -1,0 +1,5 @@
+RewriteEngine On
+RewriteBase /
+
+# Las rutas de la API (/api/*) son atendidas por el front controller PHP
+RewriteRule ^api/(.*)$ api/index.php [L,QSA]

@@ -1,0 +1,223 @@
+.barra-navegacion {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: rgba(19, 25, 29, 0.95);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid #242f38;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+/* ─── VISTA ESCRITORIO (min-width: 851px) ─── */
+@media (min-width: 851px) {
+  .nav-row-1,
+  .nav-row-2,
+  .nav-row-3 {
+    display: contents;
+  }
+
+  /* Orden exacto en escritorio */
+  .nav-item-hamburger  { order: 1; }
+  .nav-item-logo       { order: 2; margin-right: 4px; }
+  .nav-item-search     { order: 3; flex: 1; }
+  .nav-item-categorias { order: 4; display: flex; align-items: center; gap: 6px; }
+  .nav-item-feed       { order: 5; position: relative; }
+  .nav-item-tableros   { order: 6; }
+  .nav-item-perfil     { order: 7; }
+}
+
+/* Elementos comunes */
+.nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.nav-logo-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #00385a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.nav-logo-text {
+  font-size: 20px;
+  font-weight: 700;
+  color: #e8eef2;
+  white-space: nowrap;
+}
+
+.search-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1a2228;
+  padding: 8px 16px;
+  border-radius: 24px;
+  border: 1px solid #242f38;
+}
+
+.search-container input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #e8eef2;
+  width: 100%;
+  font-size: 14px;
+  font-family: 'DM Sans', sans-serif;
+}
+
+.nav-categorias {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.boton-nav {
+  background: none;
+  border: none;
+  border-radius: 12px;
+  padding: 8px 12px;
+  color: #7a909f;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.boton-nav:hover {
+  color: #e8eef2;
+  background: #1a2228;
+}
+
+.boton-nav.active {
+  background: #00385a;
+  color: #fff;
+}
+
+.nav-feed-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.feed-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  background: #1a2228;
+  border: 1.5px solid #242f38;
+  border-radius: 12px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 130px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+  z-index: 200;
+}
+
+.dropdown-item {
+  background: transparent;
+  color: #b0c8d8;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.dropdown-item.active {
+  background: #00385a;
+  color: #ffffff;
+}
+
+/* ─── VISTA MÓVIL / TABLETA (max-width: 850px) ─── */
+@media (max-width: 850px) {
+  .barra-navegacion {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  /* Oculta los textos de "Perfil" y "Tableros" dejando únicamente sus SVGs */
+  .nav-text-label {
+    display: none;
+  }
+
+  /* Fila 1: [Hamburguesa] --- [Logo Centrado] --- [Perfil] */
+  .nav-row-1 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .nav-item-hamburger { order: 1; }
+  .nav-item-logo      { order: 2; margin: 0 auto; }
+  .nav-item-perfil    { order: 3; }
+
+  .boton-nav {
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+
+  /* Fila 2: Buscador */
+  .nav-row-2 {
+    width: 100%;
+  }
+
+  .search-container {
+    width: 100%;
+  }
+
+  /* Fila 3: [Para ti / Siguiendo] [Categorías Scrollable] [Tableros] */
+  .nav-row-3 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    position: relative;
+    overflow: visible; /* Permite que el despliegue del menú se flote libremente sin recortarse */
+  }
+
+  /* El scroll horizontal se aplica estrictamente al contenedor de Categorías */
+  .nav-item-categorias {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+  }
+
+  .nav-item-categorias::-webkit-scrollbar {
+    display: none;
+  }
+}
