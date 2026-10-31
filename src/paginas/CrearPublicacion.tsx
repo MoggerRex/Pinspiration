@@ -6,15 +6,17 @@ import { IconCheck, IconImage, IconZap } from "../componentes/Iconos";
 import { ArrowLeft, Upload, FileCheck, Plus, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { API, fullUrl } from "../api";
 
 const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY || "");
 type CrearStep = "upload" | "processing" | "ai" | "form" | "recursos" | "publishing" | "done";
 interface CrearPublicacionProps {
   onBack: () => void;
   onPublish: (pin: Pin) => void;
+  currentUser: any;
 }
 
-export function CrearPublicacion({ onBack, onPublish }: CrearPublicacionProps) {
+export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublicacionProps) {
   const [step, setStep] = useState<CrearStep>("upload");
   const [mediaList, setMediaList] = useState<string[]>([]);
   const [activeMediaIdx, setActiveMediaIdx] = useState(0);
@@ -209,43 +211,86 @@ export function CrearPublicacion({ onBack, onPublish }: CrearPublicacionProps) {
     return () => clearInterval(iv);
   }, [step, mediaList]);
 
-  function handlePublish() {
+  async function handlePublish() {
     setStep("publishing");
-    setTimeout(() => {
-      const exifData: Record<string, string> = {};
-      if (exifCamera) exifData["Cámara"] = exifCamera;
-      if (exifLens) exifData["Lente"] = exifLens;
-      if (exifAperture) exifData["Apertura"] = exifAperture;
-      if (exifShutterSpeed) exifData["Velocidad"] = exifShutterSpeed;
-      if (exifIso) exifData["ISO"] = exifIso;
-      if (exifFocalLength) exifData["Focal"] = exifFocalLength;
 
-      const finalResourceName = resourceName || resourceFile?.name;
-      const resourceData = finalResourceName
-        ? [{ name: finalResourceName, url: resourceFileUrl || undefined }]
-        : undefined;
+    const exifData: Record<string, string> = {};
+    if (exifCamera) exifData["Cámara"] = exifCamera;
+    if (exifLens) exifData["Lente"] = exifLens;
+    if (exifAperture) exifData["Apertura"] = exifAperture;
+    if (exifShutterSpeed) exifData["Velocidad"] = exifShutterSpeed;
+    if (exifIso) exifData["ISO"] = exifIso;
+    if (exifFocalLength) exifData["Focal"] = exifFocalLength;
+
+    const finalResourceName = resourceName || resourceFile?.name;
+    const resourceData = finalResourceName
+      ? [{ name: finalResourceName, url: resourceFileUrl || undefined }]
+      : undefined;
+
+    const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
+    const categoria = (category as PinType) || "2D";
+
+    try {
+      // Se mantiene el mínimo de 2.2 s para que se vea la animación de "Publicando"
+      const [res] = await Promise.all([
+        fetch(`${API}/api/publicaciones`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            usuario_id: currentUser?.id,
+            titulo: title || "Mi obra",
+            descripcion: desc || null,
+            categoria,
+            software: software || null,
+            exif:
+              categoria === "Fotografía"
+                ? {
+                    camara: exifCamera,
+                    lente: exifLens,
+                    apertura: exifAperture,
+                    velocidad: exifShutterSpeed,
+                    iso: exifIso,
+                    focal: exifFocalLength,
+                  }
+                : null,
+            medios: mediaList,
+            paleta: colors,
+            etiquetas: tagList,
+          }),
+        }),
+        new Promise((r) => setTimeout(r, 2200)),
+      ]);
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
+
+      const medios: string[] = (data.medios as string[]).map(fullUrl);
 
       const newPin: Pin = {
-        id: `user-${Date.now()}`,
-        artistId: "a1",
+        id: String(data.id),
+        artistId: String(currentUser.id),
         title: title || "Mi obra",
         description: desc || undefined,
         palette: colors.length ? colors : undefined,
         software: software || undefined,
-        exif: category === "Fotografía" && Object.keys(exifData).length > 0 ? exifData : undefined,
+        exif: categoria === "Fotografía" && Object.keys(exifData).length > 0 ? exifData : undefined,
         resources: resourceData,
         publishedAt: new Date().toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" }),
-        type: (category as PinType) || "2D",
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
-        imgUrl: mediaList[0] || "",
-        media: mediaList,
+        type: categoria,
+        tags: tagList,
+        imgUrl: medios[0] || "",
+        media: medios,
         imgH: 400,
         likes: 0,
         saves: 0,
       };
       onPublish(newPin);
       setStep("done");
-    }, 2200);
+    } catch (err) {
+      console.error("Error al publicar:", err);
+      window.alert(`No se pudo publicar: ${err instanceof Error ? err.message : "error de conexión"}`);
+      setStep("recursos");
+    }
   }
 
   const renderMediaCarousel = (isFormStep = false) => {

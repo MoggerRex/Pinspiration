@@ -14,6 +14,14 @@ import { Tableros } from "./paginas/Tableros";
 import { DetalleObra } from "./paginas/DetalleObra";
 import { CrearPublicacion } from "./paginas/CrearPublicacion";
 import { Login } from "./paginas/Login";
+import { API, fullUrl } from "./api";
+
+// Convierte las rutas /uploads/... de un pin en URLs completas
+const normalizarPinApi = (p: Pin): Pin => ({
+  ...p,
+  imgUrl: fullUrl(p.imgUrl),
+  media: p.media?.map(fullUrl),
+});
 
 export default function App() {
   // Estado de sesión persistente con localStorage
@@ -30,7 +38,8 @@ export default function App() {
   const [savedNotif, setSavedNotif] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [history, setHistory] = useState<Pin[]>([]);
-  const [userPins, setUserPins] = useState<Pin[]>([]);
+  // Publicaciones cargadas desde MySQL (perfil propio, perfiles visitados y recién publicadas)
+  const [dbPins, setDbPins] = useState<Pin[]>([]);
   const [artists, setArtists] = useState<Artist[]>(ARTISTS);
 
   // ─── Control de Pila de Navegación de Publicaciones ───
@@ -59,7 +68,7 @@ export default function App() {
     return map;
   }, [artists]);
 
-  const allPins = useMemo(() => [...userPins, ...PINS], [userPins]);
+  const allPins = useMemo(() => [...dbPins, ...PINS], [dbPins]);
 
   const filteredPins = useMemo(() => {
     let pins = allPins;
@@ -82,7 +91,7 @@ export default function App() {
 
   // Cargar lista de artistas desde MySQL
   useEffect(() => {
-    fetch("http://localhost:5000/api/usuarios")
+    fetch(`${API}/api/usuarios`)
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data) && data.length > 0) {
@@ -90,7 +99,7 @@ export default function App() {
             id: String(u.id),
             name: u.nombre,
             handle: u.handle.startsWith("@") ? u.handle.slice(1) : u.handle,
-            avatar: u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200",
+            avatar: fullUrl(u.avatar) || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200",
             bio: u.bio || "Sin descripción aún.",
             followers: 0,
             following: 0,
@@ -122,7 +131,7 @@ export default function App() {
   useEffect(() => {
     if (user?.id) {
       // 1. Cargar Tableros con sus pines desde MySQL
-      fetch(`http://localhost:5000/api/tableros/${user.id}`)
+      fetch(`${API}/api/tableros/${user.id}`)
         .then((res) => res.json())
         .then((data) => {
           if (Array.isArray(data)) {
@@ -131,7 +140,7 @@ export default function App() {
               name: b.tablero_nombre,
               pins: (b.pines || []).map((pin: any) => {
                 const matchedPin = PINS.find((p) => p.id === String(pin.id));
-                return matchedPin || pin;
+                return matchedPin || normalizarPinApi(pin);
               }),
             }));
             setBoards(formattedBoards);
@@ -140,7 +149,7 @@ export default function App() {
         .catch((err) => console.error("Error al obtener tableros:", err));
 
       // 2. Cargar Historial desde MySQL (vista_historial_vista)
-      fetch(`http://localhost:5000/api/historial/${user.id}`)
+      fetch(`${API}/api/historial/${user.id}`)
         .then((res) => res.json())
         .then((data) => {
           if (Array.isArray(data)) {
@@ -153,7 +162,7 @@ export default function App() {
                 title: h.titulo,
                 type: h.categoria as PinType,
                 imgUrl:
-                  h.img_url ||
+                  fullUrl(h.img_url) ||
                   "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600",
                 imgH: 300,
                 artistId: String(h.artista_id),
@@ -167,6 +176,55 @@ export default function App() {
         })
         .catch((err) => console.error("Error al obtener historial:", err));
     }
+  }, [user?.id]);
+
+  // ─── Perfil: datos del usuario + publicaciones desde MySQL (vista_perfil_usuario) ───
+  // Aplica los datos del servidor al usuario activo y a la lista de artistas
+  function aplicarUsuarioApi(u: any, esPropio: boolean) {
+    const avatar = fullUrl(u.avatar);
+    if (esPropio) {
+      setUser((prev: any) => (prev ? { ...prev, ...u, avatar } : prev));
+    }
+    setArtists((prev) =>
+      prev.map((a) =>
+        String(a.id) === String(u.id)
+          ? { ...a, name: u.nombre, bio: u.bio || a.bio, headerBg: u.headerBg, followers: u.seguidores, following: u.siguiendo, ...(avatar ? { avatar } : {}) }
+          : a
+      )
+    );
+  }
+
+  function cargarPerfil(id: string | number) {
+    const esPropio = String(id) === String(user?.id);
+    fetch(`${API}/api/perfil/${id}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Error HTTP ${res.status} al cargar el perfil`);
+        return res.json();
+      })
+      .then(({ usuario, publicaciones }) => {
+        const pins = (publicaciones as Pin[]).map(normalizarPinApi);
+        // Reemplaza las publicaciones previas de ese usuario por las de la BD
+        setDbPins((prev) => [...pins, ...prev.filter((p) => String(p.artistId) !== String(id))]);
+        aplicarUsuarioApi(usuario, esPropio);
+      })
+      .catch((err) => console.error("Error al cargar perfil:", err));
+  }
+
+  // Al iniciar sesión: cargar el perfil propio (así la personalización persiste entre sesiones y dispositivos)
+  useEffect(() => {
+    if (user?.id) cargarPerfil(user.id);
+  }, [user?.id]);
+
+  // Al abrir el perfil de un artista: cargar sus publicaciones
+  useEffect(() => {
+    if (view === "profile" && profileId && /^\d+$/.test(String(profileId))) {
+      cargarPerfil(profileId);
+    }
+  }, [view, profileId]);
+
+  // Mantener el usuario de la sesión guardado en localStorage
+  useEffect(() => {
+    if (user) localStorage.setItem("pinspiration_user", JSON.stringify(user));
   }, [user]);
 
   function openPin(pin: Pin) {
@@ -182,7 +240,7 @@ export default function App() {
 
     // Guardar visualización en MySQL
     if (user?.id && pin.id) {
-      fetch("http://localhost:5000/api/historial", {
+      fetch(`${API}/api/historial`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -211,7 +269,7 @@ export default function App() {
   function handleCreateBoard(name: string) {
     if (!user?.id) return;
 
-    fetch("http://localhost:5000/api/tableros", {
+    fetch(`${API}/api/tableros`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ usuario_id: user.id, nombre: name }),
@@ -230,7 +288,7 @@ export default function App() {
   function handleSaveToBoard(boardId: string) {
     if (!savePin || !user?.id) return;
 
-    fetch("http://localhost:5000/api/tableros/guardar", {
+    fetch(`${API}/api/tableros/guardar`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -268,8 +326,30 @@ export default function App() {
   }
 
   const handleUpdateUser = (updatedData: any) => {
-    setUser(updatedData);
-    localStorage.setItem("pinspiration_user", JSON.stringify(updatedData));
+    const anterior = user;
+    setUser(updatedData); // actualización optimista: el modal se cierra y el perfil cambia al instante
+
+    fetch(`${API}/api/perfil/${updatedData.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nombre: updatedData.nombre ?? updatedData.name,
+        bio: updatedData.bio,
+        avatar: updatedData.avatar,
+        headerBg: updatedData.headerBg,
+      }),
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
+        aplicarUsuarioApi(data, true); // reemplaza la imagen base64 por la ruta guardada en el servidor
+      })
+      .catch((err) => {
+        console.error("Error guardando el perfil:", err);
+        setUser(anterior); // revertir
+        setSavedNotif("No se pudo guardar el perfil");
+        setTimeout(() => setSavedNotif(null), 2500);
+      });
   };
 
   if (!user) {
@@ -416,9 +496,10 @@ export default function App() {
 
       {view === "crear" && (
         <CrearPublicacion
+          currentUser={user}
           onBack={() => setView("feed")}
           onPublish={(pin) => {
-            setUserPins((prev) => [pin, ...prev]);
+            setDbPins((prev) => [pin, ...prev]);
             setTimeout(() => setView("feed"), 800);
           }}
         />

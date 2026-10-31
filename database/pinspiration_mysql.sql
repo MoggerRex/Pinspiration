@@ -315,13 +315,194 @@ WHERE p.estado = 'publicada';
 --   JOIN tableros t ON t.id = tp.tablero_id
 --   WHERE t.usuario_id = ? AND tp.publicacion_id = ?) AS guardado;
 
-USE pinspiration;
-
 -- La API hace el upsert del historial y el insert en tablero_publicacion.
 -- No se necesitan triggers: visto_at ya tiene DEFAULT y la relacion de guardados
 -- queda persistida directamente en tablero_publicacion.
 DROP TRIGGER IF EXISTS trg_historial_visualizacion_ins;
 DROP TRIGGER IF EXISTS trg_valida_tablero_publicacion;
+
+-- Pinspiration: perfil de usuario y creación de publicaciones
+-- Se puede ejecutar sobre una base ya creada (no borra datos) y repetirse sin problema.
+-- También pégalo en pinspiration_mysql.sql, antes de la sección "PRUEBAS DE VISTAS".
+
+-- ==========================================
+-- VISTA: perfil del usuario + sus publicaciones
+-- ==========================================
+-- Una fila por publicación publicada del usuario, con los datos del usuario repetidos.
+-- Si el usuario no tiene publicaciones, devuelve una sola fila con las columnas de
+-- publicación en NULL (por eso es LEFT JOIN y el filtro de estado va en el ON).
+-- Uso desde Express: SELECT * FROM vista_perfil_usuario WHERE usuario_id = ?
+CREATE OR REPLACE VIEW vista_perfil_usuario AS
+SELECT
+  u.id AS usuario_id,
+  u.nombre,
+  u.handle,
+  u.email,
+  u.avatar_url,
+  u.bio,
+  u.header_bg,
+  (SELECT COUNT(*)
+   FROM seguimientos s
+   WHERE s.seguido_id = u.id) AS seguidores,
+  (SELECT COUNT(*)
+   FROM seguimientos s
+   WHERE s.seguidor_id = u.id) AS siguiendo,
+  (SELECT COUNT(*)
+   FROM publicaciones pc
+   WHERE pc.usuario_id = u.id AND pc.estado = 'publicada') AS total_publicaciones,
+  p.id AS publicacion_pk,
+  COALESCE(p.codigo_externo, CAST(p.id AS CHAR)) AS publicacion_id,
+  p.titulo,
+  p.descripcion,
+  p.categoria,
+  p.software,
+  p.exif_camara,
+  p.exif_lente,
+  p.exif_apertura,
+  p.exif_velocidad,
+  p.exif_iso,
+  p.exif_focal,
+  p.published_at,
+  portada.url_archivo AS img_url,
+  portada.paleta_colores,
+  (SELECT GROUP_CONCAT(e.nombre ORDER BY e.nombre SEPARATOR ',')
+   FROM publicacion_etiqueta pe
+   JOIN etiquetas e ON e.id = pe.etiqueta_id
+   WHERE pe.publicacion_id = p.id) AS etiquetas,
+  (SELECT COUNT(*)
+   FROM me_gusta mg
+   WHERE mg.publicacion_id = p.id) AS total_me_gusta,
+  (SELECT COUNT(DISTINCT t.usuario_id)
+   FROM tablero_publicacion tp
+   JOIN tableros t ON t.id = tp.tablero_id
+   WHERE tp.publicacion_id = p.id) AS total_guardados
+FROM usuarios u
+LEFT JOIN publicaciones p
+  ON p.usuario_id = u.id AND p.estado = 'publicada'
+LEFT JOIN medios_publicacion portada
+  ON portada.publicacion_id = p.id AND portada.orden = 0;
+
+
+-- ==========================================
+-- STORED PROCEDURE: crear una publicación completa
+-- ==========================================
+-- Inserta en una sola transacción: publicaciones, medios_publicacion (en orden),
+-- etiquetas y publicacion_etiqueta. Si algo falla, se hace ROLLBACK y no queda nada a medias.
+--   p_medios    JSON: ["/uploads/publicaciones/a.jpg", "/uploads/publicaciones/b.jpg"]
+--   p_paleta    JSON: ["#aabbcc", "#112233"]  (se guarda en la portada, orden 0)
+--   p_etiquetas JSON: ["dragon", "fantasia"]
+-- Devuelve un SELECT con el id de la nueva publicación (publicacion_id).
+DROP PROCEDURE IF EXISTS sp_crear_publicacion;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_crear_publicacion(
+  IN p_usuario_id BIGINT UNSIGNED,
+  IN p_titulo VARCHAR(150),
+  IN p_descripcion TEXT,
+  IN p_categoria VARCHAR(20),
+  IN p_software VARCHAR(255),
+  IN p_exif_camara VARCHAR(150),
+  IN p_exif_lente VARCHAR(150),
+  IN p_exif_apertura VARCHAR(50),
+  IN p_exif_velocidad VARCHAR(50),
+  IN p_exif_iso VARCHAR(50),
+  IN p_exif_focal VARCHAR(50),
+  IN p_medios JSON,
+  IN p_paleta JSON,
+  IN p_etiquetas JSON
+)
+BEGIN
+  DECLARE v_publicacion_id BIGINT UNSIGNED;
+
+  DECLARE EXIT HANDLER FOR SQLEXCEPTION
+  BEGIN
+    ROLLBACK;
+    RESIGNAL;
+  END;
+
+  -- Validaciones (el SQLSTATE 45000 lo traduce Express a un error 400)
+  IF TRIM(IFNULL(p_titulo, '')) = '' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El título es obligatorio';
+  END IF;
+
+  IF p_categoria IS NULL OR p_categoria NOT IN ('2D', '3D', 'Fotografía', 'Edición') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Categoría inválida';
+  END IF;
+
+  IF p_medios IS NULL
+     OR JSON_TYPE(p_medios) <> 'ARRAY'
+     OR JSON_LENGTH(p_medios) NOT BETWEEN 1 AND 20 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Debes subir entre 1 y 20 imágenes';
+  END IF;
+
+  START TRANSACTION;
+
+  INSERT INTO publicaciones (
+    usuario_id, titulo, descripcion, categoria, software,
+    exif_camara, exif_lente, exif_apertura, exif_velocidad, exif_iso, exif_focal,
+    estado, published_at
+  ) VALUES (
+    p_usuario_id, TRIM(p_titulo), p_descripcion, p_categoria, p_software,
+    p_exif_camara, p_exif_lente, p_exif_apertura, p_exif_velocidad, p_exif_iso, p_exif_focal,
+    'publicada', NOW()
+  );
+
+  SET v_publicacion_id = LAST_INSERT_ID();
+
+  -- Imágenes: la primera (orden 0) es la portada
+  INSERT INTO medios_publicacion (publicacion_id, url_archivo, orden)
+  SELECT v_publicacion_id, jt.url, jt.idx - 1
+  FROM JSON_TABLE(
+    p_medios, '$[*]' COLUMNS (idx FOR ORDINALITY, url VARCHAR(2048) PATH '$')
+  ) AS jt;
+
+  IF p_paleta IS NOT NULL THEN
+    UPDATE medios_publicacion
+    SET paleta_colores = p_paleta
+    WHERE publicacion_id = v_publicacion_id AND orden = 0;
+  END IF;
+
+  -- Etiquetas: se crean las que no existan y se relacionan con la publicación
+  IF p_etiquetas IS NOT NULL AND JSON_LENGTH(p_etiquetas) > 0 THEN
+    INSERT IGNORE INTO etiquetas (nombre)
+    SELECT DISTINCT TRIM(jt.nombre)
+    FROM JSON_TABLE(
+      p_etiquetas, '$[*]' COLUMNS (nombre VARCHAR(50) PATH '$')
+    ) AS jt
+    WHERE TRIM(jt.nombre) <> '';
+
+    INSERT IGNORE INTO publicacion_etiqueta (publicacion_id, etiqueta_id)
+    SELECT DISTINCT v_publicacion_id, e.id
+    FROM JSON_TABLE(
+      p_etiquetas, '$[*]' COLUMNS (nombre VARCHAR(50) PATH '$')
+    ) AS jt
+    JOIN etiquetas e
+      ON e.nombre = TRIM(jt.nombre) COLLATE utf8mb4_0900_ai_ci;
+  END IF;
+
+  COMMIT;
+
+  SELECT v_publicacion_id AS publicacion_id;
+END$$
+
+DELIMITER ;
+
+
+-- ==========================================
+-- PRUEBAS RÁPIDAS (opcional)
+-- ==========================================
+-- Perfil con sus publicaciones:
+-- SELECT * FROM vista_perfil_usuario WHERE usuario_id = 1;
+--
+-- Crear una publicación de prueba:
+-- CALL sp_crear_publicacion(
+--   1, 'Prueba', 'Descripción', '3D', 'Blender',
+--   NULL, NULL, NULL, NULL, NULL, NULL,
+--   JSON_ARRAY('/uploads/publicaciones/prueba.jpg'),
+--   JSON_ARRAY('#00385a', '#13191d'),
+--   JSON_ARRAY('prueba', 'blender')
+-- );
 
 -- ==========================================
 -- PRUEBAS DE VISTAS (SELECT para cada vista)

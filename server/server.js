@@ -1,12 +1,24 @@
 import express from 'express';
 import mysql from 'mysql2';
 import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+fs.mkdirSync(path.join(UPLOADS_DIR, 'avatares'), { recursive: true });
+fs.mkdirSync(path.join(UPLOADS_DIR, 'publicaciones'), { recursive: true });
 
 const app = express();
 
 // Middlewares
 app.use(cors());
-app.use(express.json());
+// Límite alto porque las imágenes llegan como data URL (base64) desde el frontend
+app.use(express.json({ limit: '100mb' }));
+// Imágenes subidas (avatares y publicaciones)
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Configuración de la conexión a MySQL Workbench
 const db = mysql.createPool({
@@ -14,6 +26,7 @@ const db = mysql.createPool({
   user: 'root',
   password: 'root', // <-- Cambia por tu contraseña de MySQL si es distinta
   database: 'pinspiration',
+  charset: 'utf8mb4',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
@@ -269,6 +282,254 @@ app.post('/api/historial', (req, res) => {
       res.json({ mensaje: 'Historial actualizado' });
     });
   });
+});
+
+
+// ═══════════════════════════════════════════════════════════════
+// PERFIL DE USUARIO Y PUBLICACIONES
+// ═══════════════════════════════════════════════════════════════
+const dbp = db.promise();
+
+const CATEGORIAS = ['2D', '3D', 'Fotografía', 'Edición'];
+const EXT_POR_MIME = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+
+// Guarda una imagen en formato data URL en /uploads/<carpeta> y devuelve su ruta relativa.
+// En la BD se guarda solo la ruta (/uploads/...) para no depender de la IP o el host del servidor.
+const guardarImagenDataUrl = async (dataUrl, carpeta) => {
+  if (typeof dataUrl !== 'string') throw new Error('Imagen inválida');
+  const coma = dataUrl.indexOf(',');
+  const cabecera = /^data:(image\/[a-z0-9.+-]+);base64$/i.exec(dataUrl.slice(0, coma));
+  const ext = cabecera && EXT_POR_MIME[cabecera[1].toLowerCase()];
+  if (!ext) throw new Error('Formato de imagen no permitido (usa JPG, PNG, WEBP o GIF)');
+
+  const nombre = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+  await fs.promises.writeFile(
+    path.join(UPLOADS_DIR, carpeta, nombre),
+    Buffer.from(dataUrl.slice(coma + 1), 'base64')
+  );
+  return `/uploads/${carpeta}/${nombre}`;
+};
+
+const borrarArchivosSubidos = (rutas) =>
+  rutas.forEach((r) => fs.promises.unlink(path.join(__dirname, r)).catch(() => {}));
+
+const parseJson = (v) => {
+  if (v == null) return null;
+  if (typeof v !== 'string') return v;
+  try { return JSON.parse(v); } catch { return null; }
+};
+
+const textoOpcional = (v, max) => {
+  const t = String(v ?? '').trim();
+  return t ? t.slice(0, max) : null;
+};
+
+const mapUsuarioPerfil = (r) => ({
+  id: r.usuario_id,
+  nombre: r.nombre,
+  handle: r.handle,
+  email: r.email,
+  avatar: r.avatar_url,
+  bio: r.bio,
+  headerBg: r.header_bg,
+  seguidores: Number(r.seguidores) || 0,
+  siguiendo: Number(r.siguiendo) || 0,
+});
+
+const armarExif = (r) => {
+  const exif = {};
+  if (r.exif_camara) exif['Cámara'] = r.exif_camara;
+  if (r.exif_lente) exif['Lente'] = r.exif_lente;
+  if (r.exif_apertura) exif['Apertura'] = r.exif_apertura;
+  if (r.exif_velocidad) exif['Velocidad'] = r.exif_velocidad;
+  if (r.exif_iso) exif['ISO'] = r.exif_iso;
+  if (r.exif_focal) exif['Focal'] = r.exif_focal;
+  return Object.keys(exif).length ? exif : undefined;
+};
+
+// GET perfil: datos del usuario + sus publicaciones (vista_perfil_usuario)
+app.get('/api/perfil/:usuarioId', async (req, res) => {
+  const id = Number(req.params.usuarioId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'ID de usuario inválido' });
+  }
+
+  try {
+    const [rows] = await dbp.query(
+      'SELECT * FROM vista_perfil_usuario WHERE usuario_id = ? ORDER BY published_at DESC, publicacion_pk DESC',
+      [id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    // Todas las imágenes de cada publicación (la vista solo trae la portada)
+    const pks = rows.filter((r) => r.publicacion_pk).map((r) => r.publicacion_pk);
+    const mediosPorPub = {};
+    if (pks.length > 0) {
+      const [medios] = await dbp.query(
+        'SELECT publicacion_id, url_archivo FROM medios_publicacion WHERE publicacion_id IN (?) ORDER BY publicacion_id, orden',
+        [pks]
+      );
+      medios.forEach((m) => {
+        (mediosPorPub[m.publicacion_id] ||= []).push(m.url_archivo);
+      });
+    }
+
+    const publicaciones = rows
+      .filter((r) => r.publicacion_pk)
+      .map((r) => {
+        const media = mediosPorPub[r.publicacion_pk] || (r.img_url ? [r.img_url] : []);
+        return {
+          id: String(r.publicacion_id),
+          artistId: String(r.usuario_id),
+          title: r.titulo,
+          description: r.descripcion || undefined,
+          type: r.categoria,
+          software: r.software || undefined,
+          exif: r.categoria === 'Fotografía' ? armarExif(r) : undefined,
+          palette: parseJson(r.paleta_colores) || undefined,
+          publishedAt: r.published_at
+            ? new Date(r.published_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
+            : undefined,
+          tags: r.etiquetas ? r.etiquetas.split(',') : [],
+          imgUrl: media[0] || '',
+          media,
+          imgH: 400,
+          likes: Number(r.total_me_gusta) || 0,
+          saves: Number(r.total_guardados) || 0,
+        };
+      });
+
+    res.json({ usuario: mapUsuarioPerfil(rows[0]), publicaciones });
+  } catch (err) {
+    console.error('Error al consultar perfil:', err);
+    res.status(500).json({ error: 'Error al consultar el perfil' });
+  }
+});
+
+// PUT perfil: guarda la personalización (nombre, bio, foto y color del encabezado)
+app.put('/api/perfil/:usuarioId', async (req, res) => {
+  const id = Number(req.params.usuarioId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'ID de usuario inválido' });
+  }
+
+  const nombre = String(req.body.nombre ?? '').trim();
+  const bio = String(req.body.bio ?? '').trim();
+  const headerBg = String(req.body.headerBg ?? '').trim();
+  let avatar = String(req.body.avatar ?? '').trim();
+
+  if (!nombre || nombre.length > 100) {
+    return res.status(400).json({ error: 'El nombre es obligatorio (máximo 100 caracteres)' });
+  }
+  if (bio.length > 1000) {
+    return res.status(400).json({ error: 'La descripción no puede superar 1000 caracteres' });
+  }
+  // Solo colores simples o degradados (se usa como `background` en el encabezado)
+  if (!/^(transparent|#[0-9a-f]{3,8}|linear-gradient\([#0-9a-z%.,() -]+\))$/i.test(headerBg) || headerBg.length > 512) {
+    return res.status(400).json({ error: 'Color de encabezado inválido' });
+  }
+
+  try {
+    if (avatar.startsWith('data:')) {
+      avatar = await guardarImagenDataUrl(avatar, 'avatares');
+    } else {
+      // Si llega una URL absoluta de nuestro propio /uploads, se guarda solo la ruta relativa
+      const propia = /^https?:\/\/[^/]+(\/uploads\/.+)$/i.exec(avatar);
+      if (propia) avatar = propia[1];
+      if (avatar.length > 2048) {
+        return res.status(400).json({ error: 'La URL de la foto es demasiado larga' });
+      }
+    }
+
+    await dbp.query(
+      'UPDATE usuarios SET nombre = ?, bio = ?, avatar_url = ?, header_bg = ? WHERE id = ?',
+      [nombre, bio || null, avatar || null, headerBg, id]
+    );
+
+    const [rows] = await dbp.query('SELECT * FROM vista_perfil_usuario WHERE usuario_id = ? LIMIT 1', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+    res.json(mapUsuarioPerfil(rows[0]));
+  } catch (err) {
+    console.error('Error al actualizar perfil:', err);
+    const esImagen = /imagen|formato/i.test(err.message || '');
+    res.status(esImagen ? 400 : 500).json({ error: esImagen ? err.message : 'Error al guardar el perfil' });
+  }
+});
+
+// POST publicación: guarda las imágenes en disco y llama al stored procedure
+app.post('/api/publicaciones', async (req, res) => {
+  const { usuario_id, titulo, descripcion, categoria, software, exif, medios, paleta, etiquetas } = req.body;
+
+  const usuarioId = Number(usuario_id);
+  if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
+    return res.status(400).json({ error: 'Usuario inválido' });
+  }
+  if (!String(titulo ?? '').trim()) {
+    return res.status(400).json({ error: 'El título es obligatorio' });
+  }
+  if (!CATEGORIAS.includes(categoria)) {
+    return res.status(400).json({ error: 'Categoría inválida' });
+  }
+  if (!Array.isArray(medios) || medios.length < 1 || medios.length > 20) {
+    return res.status(400).json({ error: 'Debes subir entre 1 y 20 imágenes' });
+  }
+
+  const tags = [];
+  (Array.isArray(etiquetas) ? etiquetas : []).forEach((t) => {
+    const limpio = String(t ?? '').trim().slice(0, 50);
+    if (limpio && !tags.some((x) => x.toLowerCase() === limpio.toLowerCase())) tags.push(limpio);
+  });
+  const colores = (Array.isArray(paleta) ? paleta : [])
+    .filter((c) => typeof c === 'string' && c.length <= 30)
+    .slice(0, 10);
+  const e = categoria === 'Fotografía' && exif ? exif : {};
+
+  const rutas = [];
+  try {
+    for (const m of medios) {
+      rutas.push(await guardarImagenDataUrl(m, 'publicaciones'));
+    }
+
+    const [resultSets] = await dbp.query(
+      'CALL sp_crear_publicacion(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        usuarioId,
+        String(titulo).trim().slice(0, 150),
+        textoOpcional(descripcion, 5000),
+        categoria,
+        textoOpcional(software, 255),
+        textoOpcional(e.camara, 150),
+        textoOpcional(e.lente, 150),
+        textoOpcional(e.apertura, 50),
+        textoOpcional(e.velocidad, 50),
+        textoOpcional(e.iso, 50),
+        textoOpcional(e.focal, 50),
+        JSON.stringify(rutas),
+        colores.length ? JSON.stringify(colores) : null,
+        JSON.stringify(tags),
+      ]
+    );
+
+    // resultSets[0] = filas del SELECT final del procedure
+    const publicacionId = resultSets[0][0].publicacion_id;
+    res.status(201).json({ id: String(publicacionId), medios: rutas });
+  } catch (err) {
+    console.error('Error al crear publicación:', err);
+    borrarArchivosSubidos(rutas);
+
+    if (err.sqlState === '45000') {
+      return res.status(400).json({ error: err.sqlMessage });
+    }
+    if (err.errno === 1452) {
+      return res.status(400).json({ error: 'El usuario no existe' });
+    }
+    const esImagen = /imagen|formato/i.test(err.message || '');
+    res.status(esImagen ? 400 : 500).json({ error: esImagen ? err.message : 'Error al crear la publicación' });
+  }
 });
 
 // Iniciar servidor

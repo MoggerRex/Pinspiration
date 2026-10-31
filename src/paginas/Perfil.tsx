@@ -74,8 +74,8 @@ export function Perfil({
         email: currentUser.email,
         avatar: currentUser.avatar || currentUser.avatar_url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200",
         bio: currentUser.bio || "Sin descripción aún.",
-        followers: 0,
-        following: 0,
+        followers: currentUser.seguidores ?? 0,
+        following: currentUser.siguiendo ?? 0,
         headerBg: currentUser.headerBg || currentUser.header_bg || "linear-gradient(0deg, #13191d 5%, #00385a 100%)",
       }
     : artists.find((a) => String(a.id) === String(profileId)) || artists[0];
