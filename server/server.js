@@ -331,6 +331,41 @@ const dbp = db.promise();
 const CATEGORIAS = ['2D', '3D', 'Fotografía', 'Edición'];
 const EXT_POR_MIME = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 
+const resolverPublicacionId = async (id) => {
+  const texto = String(id ?? '').trim();
+  if (!texto) return null;
+
+  const consulta = /^\d+$/.test(texto)
+    ? 'SELECT id FROM publicaciones WHERE id = ? LIMIT 1'
+    : 'SELECT id FROM publicaciones WHERE codigo_externo = ? LIMIT 1';
+  const [rows] = await dbp.query(consulta, [/^\d+$/.test(texto) ? Number(texto) : texto]);
+  return rows[0]?.id ?? null;
+};
+
+const cargarContadoresInteraccion = async (publicacionId) => {
+  const [rows] = await dbp.query(
+    `SELECT total_me_gusta, total_guardados, total_comentarios
+     FROM vista_detalle_publicacion WHERE publicacion_id = ? LIMIT 1`,
+    [publicacionId]
+  );
+  return rows[0];
+};
+
+const mapComentario = (comentario) => ({
+  id: String(comentario.id),
+  artistId: String(comentario.usuario_id),
+  name: comentario.nombre,
+  handle: String(comentario.handle || '').replace(/^@/, ''),
+  avatar: comentario.avatar || '',
+  text: comentario.contenido,
+  date: new Date(comentario.created_at).toLocaleString('es-MX', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }),
+});
+
 // Guarda una imagen en formato data URL en /uploads/<carpeta> y devuelve su ruta relativa.
 // En la BD se guarda solo la ruta (/uploads/...) para no depender de la IP o el host del servidor.
 const guardarImagenDataUrl = async (dataUrl, carpeta) => {
@@ -489,6 +524,188 @@ const armarExif = (r) => {
   if (r.exif_focal) exif['Focal'] = r.exif_focal;
   return Object.keys(exif).length ? exif : undefined;
 };
+
+app.get('/api/publicaciones/:id/interacciones', async (req, res) => {
+  const usuarioId = Number(req.query.usuario_id);
+  if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
+    return res.status(400).json({ error: 'Usuario inválido' });
+  }
+
+  try {
+    const publicacionId = await resolverPublicacionId(req.params.id);
+    if (!publicacionId) return res.status(404).json({ error: 'Publicación no encontrada' });
+
+    const contadores = await cargarContadoresInteraccion(publicacionId);
+    if (!contadores) return res.status(404).json({ error: 'Publicación no encontrada' });
+
+    const [[likeRows], [saveRows], [comentarios]] = await Promise.all([
+      dbp.query(
+        'SELECT EXISTS(SELECT 1 FROM me_gusta WHERE usuario_id = ? AND publicacion_id = ?) AS activo',
+        [usuarioId, publicacionId]
+      ),
+      dbp.query(
+        `SELECT EXISTS(
+           SELECT 1 FROM tablero_publicacion tp
+           JOIN tableros t ON t.id = tp.tablero_id
+           WHERE t.usuario_id = ? AND tp.publicacion_id = ?
+         ) AS activo`,
+        [usuarioId, publicacionId]
+      ),
+      dbp.query(
+        `SELECT c.id, c.usuario_id, c.contenido, c.created_at,
+                u.nombre, u.handle, u.avatar_url AS avatar
+         FROM comentarios c
+         JOIN usuarios u ON u.id = c.usuario_id
+         WHERE c.publicacion_id = ?
+         ORDER BY c.created_at DESC, c.id DESC
+         LIMIT 100`,
+        [publicacionId]
+      ),
+    ]);
+
+    res.json({
+      liked: Boolean(likeRows[0].activo),
+      saved: Boolean(saveRows[0].activo),
+      likesCount: Number(contadores.total_me_gusta) || 0,
+      savesCount: Number(contadores.total_guardados) || 0,
+      commentsCount: Number(contadores.total_comentarios) || 0,
+      comments: comentarios.map(mapComentario),
+    });
+  } catch (err) {
+    console.error('Error al consultar interacciones de la publicación:', err);
+    res.status(500).json({ error: 'Error al consultar las interacciones' });
+  }
+});
+
+app.put('/api/publicaciones/:id/like', async (req, res) => {
+  const usuarioId = Number(req.body.usuario_id);
+  const liked = req.body.liked;
+  if (!Number.isInteger(usuarioId) || usuarioId <= 0 || typeof liked !== 'boolean') {
+    return res.status(400).json({ error: 'Usuario o estado de me gusta inválido' });
+  }
+
+  try {
+    const publicacionId = await resolverPublicacionId(req.params.id);
+    if (!publicacionId) return res.status(404).json({ error: 'Publicación no encontrada' });
+    if (!(await cargarContadoresInteraccion(publicacionId))) {
+      return res.status(404).json({ error: 'Publicación no encontrada' });
+    }
+
+    if (liked) {
+      await dbp.query(
+        'INSERT IGNORE INTO me_gusta (usuario_id, publicacion_id) VALUES (?, ?)',
+        [usuarioId, publicacionId]
+      );
+    } else {
+      await dbp.query(
+        'DELETE FROM me_gusta WHERE usuario_id = ? AND publicacion_id = ?',
+        [usuarioId, publicacionId]
+      );
+    }
+
+    const contadores = await cargarContadoresInteraccion(publicacionId);
+    res.json({ liked, likesCount: Number(contadores.total_me_gusta) || 0 });
+  } catch (err) {
+    console.error('Error al actualizar me gusta:', err);
+    const usuarioInexistente = err.errno === 1452;
+    res.status(usuarioInexistente ? 400 : 500).json({
+      error: usuarioInexistente ? 'El usuario no existe' : 'Error al actualizar me gusta',
+    });
+  }
+});
+
+app.put('/api/publicaciones/:id/guardar', async (req, res) => {
+  const usuarioId = Number(req.body.usuario_id);
+  const saved = req.body.saved;
+  if (!Number.isInteger(usuarioId) || usuarioId <= 0 || typeof saved !== 'boolean') {
+    return res.status(400).json({ error: 'Usuario o estado de guardado inválido' });
+  }
+
+  let connection;
+  let tableroId = null;
+  try {
+    const publicacionId = await resolverPublicacionId(req.params.id);
+    if (!publicacionId) return res.status(404).json({ error: 'Publicación no encontrada' });
+    if (!(await cargarContadoresInteraccion(publicacionId))) {
+      return res.status(404).json({ error: 'Publicación no encontrada' });
+    }
+
+    connection = await dbp.getConnection();
+    await connection.beginTransaction();
+    if (saved) {
+      const [tablero] = await connection.query(
+        `INSERT INTO tableros (usuario_id, nombre) VALUES (?, 'Guardados')
+         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+        [usuarioId]
+      );
+      tableroId = tablero.insertId;
+      await connection.query(
+        'INSERT IGNORE INTO tablero_publicacion (tablero_id, publicacion_id) VALUES (?, ?)',
+        [tablero.insertId, publicacionId]
+      );
+    } else {
+      await connection.query(
+        `DELETE tp FROM tablero_publicacion tp
+         JOIN tableros t ON t.id = tp.tablero_id
+         WHERE t.usuario_id = ? AND tp.publicacion_id = ?`,
+        [usuarioId, publicacionId]
+      );
+    }
+    await connection.commit();
+
+    const contadores = await cargarContadoresInteraccion(publicacionId);
+    res.json({ saved, savesCount: Number(contadores.total_guardados) || 0, boardId: tableroId });
+  } catch (err) {
+    if (connection) await connection.rollback();
+    console.error('Error al actualizar guardado:', err);
+    const usuarioInexistente = err.errno === 1452;
+    res.status(usuarioInexistente ? 400 : 500).json({
+      error: usuarioInexistente ? 'El usuario no existe' : 'Error al actualizar el guardado',
+    });
+  } finally {
+    connection?.release();
+  }
+});
+
+app.post('/api/publicaciones/:id/comentarios', async (req, res) => {
+  const usuarioId = Number(req.body.usuario_id);
+  const contenido = String(req.body.contenido ?? '').trim();
+  if (!Number.isInteger(usuarioId) || usuarioId <= 0 || !contenido || contenido.length > 2000) {
+    return res.status(400).json({ error: 'El comentario debe tener entre 1 y 2000 caracteres y un usuario válido' });
+  }
+
+  try {
+    const publicacionId = await resolverPublicacionId(req.params.id);
+    if (!publicacionId) return res.status(404).json({ error: 'Publicación no encontrada' });
+    if (!(await cargarContadoresInteraccion(publicacionId))) {
+      return res.status(404).json({ error: 'Publicación no encontrada' });
+    }
+
+    const [insertado] = await dbp.query(
+      'INSERT INTO comentarios (publicacion_id, usuario_id, contenido) VALUES (?, ?, ?)',
+      [publicacionId, usuarioId, contenido]
+    );
+    const [rows] = await dbp.query(
+      `SELECT c.id, c.usuario_id, c.contenido, c.created_at,
+              u.nombre, u.handle, u.avatar_url AS avatar
+       FROM comentarios c
+       JOIN usuarios u ON u.id = c.usuario_id
+       WHERE c.id = ?`,
+      [insertado.insertId]
+    );
+    const contadores = await cargarContadoresInteraccion(publicacionId);
+    res.status(201).json({
+      comment: mapComentario(rows[0]),
+      commentsCount: Number(contadores.total_comentarios) || 0,
+    });
+  } catch (err) {
+    console.error('Error al crear comentario:', err);
+    const usuarioInexistente = err.errno === 1452;
+    res.status(usuarioInexistente ? 400 : 500).json({
+      error: usuarioInexistente ? 'El usuario no existe' : 'Error al crear el comentario',
+    });
+  }
+});
 
 // GET detalle: datos de la publicación desde la vista vista_detalle_publicacion.
 // Acepta el id numérico o el código externo de la semilla (por ejemplo "p4").

@@ -29,6 +29,7 @@ interface DetalleObraProps {
   onBack: () => void;
   onArtist: (id: string) => void;
   onSave: (pin: Pin) => void;
+  onSavedChange?: (pin: Pin, saved: boolean, boardId?: string) => void;
   onPin: (pin: Pin) => void;
   onSelectCategory?: (category: string) => void;
   onSelectTag?: (tag: string) => void;
@@ -140,7 +141,7 @@ function getCategoryClass(type: string): string {
 
 // ─── Componente Principal ───────────────────────────────────────────────────
 
-export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onArtist, onSave, onPin, onSelectCategory, onSelectTag }: DetalleObraProps) {
+export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onArtist, onSave, onSavedChange, onPin, onSelectCategory, onSelectTag }: DetalleObraProps) {
   const artist = artistMap[pin.artistId];
 
   // Contadores reales del autor desde vista_detalle_publicacion (GET /api/publicaciones/:id).
@@ -205,29 +206,58 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
   const [descModalOpen, setDescModalOpen] = useState(false);
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
 
-  // Estados interactivos para comentarios
-  const [comments, setComments] = useState<Comment[]>([
-    {
-      id: "c1",
-      artistId: "a1", // ID simulado correspondiente a un artista registrado
-      name: "Sofía Valdés",
-      handle: "sofia_art",
-      avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
-      text: "¡Me encanta la composición y el tratamiento del color!",
-      date: "Hace 2 horas"
-    },
-    {
-      id: "c2",
-      artistId: "a2",
-      name: "Mateo Rivas",
-      handle: "mateo3d",
-      avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200",
-      text: "El nivel de detalle es increíble.",
-      date: "Hace 4 horas"
-    }
-  ]);
+  const [comments, setComments] = useState<Comment[]>([]);
   const [commentInput, setCommentInput] = useState("");
-  const [commentsCount, setCommentsCount] = useState((pin as any).commentsCount ?? 85);
+  const [commentsCount, setCommentsCount] = useState((pin as any).commentsCount ?? 0);
+  const [isSaved, setIsSaved] = useState(false);
+  const [savesCount, setSavesCount] = useState(pin.saves);
+  const [isLiked, setIsLiked] = useState(false);
+  const [likesCount, setLikesCount] = useState(pin.likes);
+  const [interactionsLoading, setInteractionsLoading] = useState(false);
+  const [interactionError, setInteractionError] = useState<string | null>(null);
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+
+  useEffect(() => {
+    setComments([]);
+    setCommentsCount(0);
+    setIsSaved(false);
+    setSavesCount(pin.saves);
+    setIsLiked(false);
+    setLikesCount(pin.likes);
+    setInteractionError(null);
+    if (!currentUser?.id) return;
+
+    let activo = true;
+    setInteractionsLoading(true);
+    fetch(`${API}/api/publicaciones/${encodeURIComponent(pin.id)}/interacciones?usuario_id=${encodeURIComponent(String(currentUser.id))}`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
+        if (!activo) return;
+        setIsLiked(data.liked);
+        setIsSaved(data.saved);
+        setLikesCount(Number(data.likesCount) || 0);
+        setSavesCount(Number(data.savesCount) || 0);
+        setCommentsCount(Number(data.commentsCount) || 0);
+        setComments(
+          (data.comments as Comment[]).map((comment) => ({
+            ...comment,
+            avatar: fullUrl(comment.avatar),
+          }))
+        );
+      })
+      .catch((err) => {
+        console.error("Error al cargar las interacciones:", err);
+        if (activo) setInteractionError("No se pudieron cargar las interacciones guardadas.");
+      })
+      .finally(() => {
+        if (activo) setInteractionsLoading(false);
+      });
+
+    return () => {
+      activo = false;
+    };
+  }, [pin.id, currentUser?.id]);
 
   // Arreglo de medios adjuntos
   const mediaList = detalleMedia;
@@ -331,13 +361,6 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
     };
   }, [activeMediaIdx, pin, mediaList]);
 
-  // Estados interactivos + contadores simulados
-  const [isSaved, setIsSaved] = useState(false);
-  const [savesCount, setSavesCount] = useState((pin as any).saves ?? 342);
-
-  const [isLiked, setIsLiked] = useState(false);
-  const [likesCount, setLikesCount] = useState(pin.likes);
-
   // Bloquea el scroll del fondo cuando cualquiera de los modales está abierto
   useEffect(() => {
     if (descModalOpen || lightbox || commentsModalOpen) {
@@ -354,25 +377,75 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
     };
   }, [descModalOpen, lightbox, commentsModalOpen]);
 
-  // Función para agregar un nuevo comentario
-  const handleAddComment = (e: React.FormEvent) => {
+  async function handleToggleLike() {
+    const liked = !isLiked;
+    setInteractionsLoading(true);
+    try {
+      const res = await fetch(`${API}/api/publicaciones/${encodeURIComponent(pin.id)}/like`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario_id: currentUser?.id, liked }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
+      setIsLiked(data.liked);
+      setLikesCount(Number(data.likesCount) || 0);
+      setInteractionError(null);
+    } catch (err) {
+      console.error("Error al guardar me gusta:", err);
+      window.alert(`No se pudo guardar el me gusta: ${err instanceof Error ? err.message : "error de conexión"}`);
+    } finally {
+      setInteractionsLoading(false);
+    }
+  }
+
+  async function handleToggleSaved() {
+    const saved = !isSaved;
+    setInteractionsLoading(true);
+    try {
+      const res = await fetch(`${API}/api/publicaciones/${encodeURIComponent(pin.id)}/guardar`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario_id: currentUser?.id, saved }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
+      setIsSaved(data.saved);
+      setSavesCount(Number(data.savesCount) || 0);
+      onSavedChange?.(pin, data.saved, data.boardId ? String(data.boardId) : undefined);
+      setInteractionError(null);
+    } catch (err) {
+      console.error("Error al guardar la publicación:", err);
+      window.alert(`No se pudo guardar la publicación: ${err instanceof Error ? err.message : "error de conexión"}`);
+    } finally {
+      setInteractionsLoading(false);
+    }
+  }
+
+  async function handleAddComment(e: React.FormEvent) {
     e.preventDefault();
     if (!commentInput.trim()) return;
 
-    const newComment: Comment = {
-      id: `c_${Date.now()}`,
-      artistId: currentUser?.id || "me",
-      name: currentUser?.nombre || currentUser?.name || ME.name,
-      handle: currentUser?.handle?.replace("@", "") || ME.handle,
-      avatar: currentUser?.avatar || ME.avatar,
-      text: commentInput.trim(),
-      date: "Justo ahora"
-    };
-
-    setComments([newComment, ...comments]);
-    setCommentsCount((prev: number) => prev + 1);
-    setCommentInput("");
-  };
+    setCommentSubmitting(true);
+    try {
+      const res = await fetch(`${API}/api/publicaciones/${encodeURIComponent(pin.id)}/comentarios`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario_id: currentUser?.id, contenido: commentInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
+      setComments((prev) => [data.comment, ...prev]);
+      setCommentsCount(Number(data.commentsCount) || 0);
+      setCommentInput("");
+      setInteractionError(null);
+    } catch (err) {
+      console.error("Error al publicar comentario:", err);
+      window.alert(`No se pudo publicar el comentario: ${err instanceof Error ? err.message : "error de conexión"}`);
+    } finally {
+      setCommentSubmitting(false);
+    }
+  }
 
   // Manejador para navegar al perfil del usuario desde un comentario
   const handleCommentUserClick = (commentArtistId?: string) => {
@@ -757,16 +830,8 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
             {/* Fila de Botones: Guardar + Me gusta + Comentar */}
             <div style={{ display: "flex", gap: 10 }}>
               <button
-                onClick={() => {
-                  if (isSaved) {
-                    setIsSaved(false);
-                    setSavesCount((prev: number) => prev - 1);
-                  } else {
-                    setIsSaved(true);
-                    setSavesCount((prev: number) => prev + 1);
-                  }
-                  onSave(pin);
-                }}
+                onClick={handleToggleSaved}
+                disabled={interactionsLoading}
                 style={{
                   flex: 1,
                   background: "#1a2228",
@@ -802,15 +867,8 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
               </button>
 
               <button
-                onClick={() => {
-                  if (isLiked) {
-                    setIsLiked(false);
-                    setLikesCount((prev: number) => prev - 1);
-                  } else {
-                    setIsLiked(true);
-                    setLikesCount((prev: number) => prev + 1);
-                  }
-                }}
+                onClick={handleToggleLike}
+                disabled={interactionsLoading}
                 style={{
                   flex: 1,
                   background: "#1a2228",
@@ -878,6 +936,11 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
                 <span>Comentar ({formatNum(commentsCount)})</span>
               </button>
             </div>
+            {interactionError && (
+              <p role="alert" style={{ margin: "-12px 0 0", color: "#f08a8a", fontSize: 12 }}>
+                {interactionError}
+              </p>
+            )}
 
             {/* Contenedor de Descripción interactivo */}
             {(detalleDescripcion || pin.publishedAt) && (
@@ -1213,20 +1276,20 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
               />
               <button
                 type="submit"
-                disabled={!commentInput.trim()}
+                disabled={!commentInput.trim() || commentSubmitting}
                 style={{
-                  background: commentInput.trim() ? "#00385a" : "#1f2a32",
-                  color: commentInput.trim() ? "#ffffff" : "#7a909f",
+                  background: commentInput.trim() && !commentSubmitting ? "#00385a" : "#1f2a32",
+                  color: commentInput.trim() && !commentSubmitting ? "#ffffff" : "#7a909f",
                   border: "none",
                   borderRadius: 20,
                   padding: "11px 22px",
                   fontWeight: 600,
                   fontSize: 14,
-                  cursor: commentInput.trim() ? "pointer" : "default",
+                  cursor: commentInput.trim() && !commentSubmitting ? "pointer" : "default",
                   flexShrink: 0
                 }}
               >
-                Publicar
+                {commentSubmitting ? "Publicando..." : "Publicar"}
               </button>
             </form>
 

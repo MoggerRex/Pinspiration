@@ -490,6 +490,27 @@ export default function App() {
           onBack={handleBackFromPin}
           onArtist={handleArtist}
           onSave={(p) => setSavePin(p)}
+          onSavedChange={(pin, saved, boardId) => {
+            setBoards((prev) => {
+              if (!saved) {
+                return prev.map((board) => ({
+                  ...board,
+                  pins: board.pins.filter((savedPin) => savedPin.id !== pin.id),
+                }));
+              }
+
+              const id = boardId || `saved-${user.id}`;
+              const existing = prev.find((board) => board.id === id);
+              if (existing) {
+                return prev.map((board) =>
+                  board.id === id && !board.pins.some((savedPin) => savedPin.id === pin.id)
+                    ? { ...board, pins: [...board.pins, pin] }
+                    : board
+                );
+              }
+              return [...prev, { id, name: "Guardados", pins: [pin] }];
+            });
+          }}
           onPin={openPin}
           onSelectCategory={(categoria) => {
             setActiveType(categoria as PinType);
