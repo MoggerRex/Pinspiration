@@ -81,6 +81,37 @@ body {
   }
 }
 
+/* El feed conserva el orden cronológico de izquierda a derecha y por filas. */
+.feed-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-auto-rows: 8px;
+  grid-auto-flow: row dense;
+  gap: 12px;
+}
+
+.feed-grid .masonry-item {
+  margin-bottom: 0;
+}
+
+@media (max-width: 1200px) {
+  .feed-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .feed-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .feed-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 /* Search bar */
 .search-bar {
   background: #1a2228;

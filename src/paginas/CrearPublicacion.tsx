@@ -36,7 +36,6 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   const [hasResource, setHasResource] = useState(false);
   const [resourceName, setResourceName] = useState("");
   const [resourceFile, setResourceFile] = useState<File | null>(null);
-  const [resourceFileUrl, setResourceFileUrl] = useState<string | null>(null);
 
   const STEPS: CrearStep[] = ["upload", "processing", "ai", "form", "recursos", "publishing", "done"];
   const STEP_LABELS = ["Imagen", "Análisis", "IA", "Detalles", "Recursos", "Publicar", "¡Listo!"];
@@ -222,15 +221,28 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     if (exifIso) exifData["ISO"] = exifIso;
     if (exifFocalLength) exifData["Focal"] = exifFocalLength;
 
-    const finalResourceName = resourceName || resourceFile?.name;
-    const resourceData = finalResourceName
-      ? [{ name: finalResourceName, url: resourceFileUrl || undefined }]
-      : undefined;
+    const finalResourceName = resourceName.trim() || resourceFile?.name;
 
     const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
     const categoria = (category as PinType) || "2D";
 
     try {
+      const recurso = resourceFile
+        ? {
+            nombre: finalResourceName || resourceFile.name,
+            data: await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                if (typeof reader.result === "string") resolve(reader.result);
+                else reject(new Error("No se pudo leer el archivo de recurso"));
+              };
+              reader.onerror = () => reject(new Error("No se pudo leer el archivo de recurso"));
+              reader.readAsDataURL(resourceFile);
+            }),
+            tipoMime: resourceFile.type || "application/octet-stream",
+          }
+        : null;
+
       // Se mantiene el mínimo de 2.2 s para que se vea la animación de "Publicando"
       const [res] = await Promise.all([
         fetch(`${API}/api/publicaciones`, {
@@ -256,6 +268,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             medios: mediaList,
             paleta: colors,
             etiquetas: tagList,
+            recurso,
           }),
         }),
         new Promise((r) => setTimeout(r, 2200)),
@@ -274,7 +287,12 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
         palette: colors.length ? colors : undefined,
         software: software || undefined,
         exif: categoria === "Fotografía" && Object.keys(exifData).length > 0 ? exifData : undefined,
-        resources: resourceData,
+        resources: Array.isArray(data.resources)
+          ? data.resources.map((resource: { name: string; url?: string }) => ({
+              ...resource,
+              url: fullUrl(resource.url),
+            }))
+          : undefined,
         publishedAt: new Date().toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" }),
         type: categoria,
         tags: tagList,
@@ -1375,7 +1393,6 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                     setHasResource(e.target.checked);
                     if (!e.target.checked) {
                       setResourceFile(null);
-                      setResourceFileUrl(null);
                       setResourceName("");
                     }
                   }}
@@ -1420,7 +1437,6 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                       const file = e.dataTransfer.files[0];
                       if (file) {
                         setResourceFile(file);
-                        setResourceFileUrl(URL.createObjectURL(file));
                         if (!resourceName) setResourceName(file.name);
                       }
                     }}
@@ -1432,7 +1448,6 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                         const file = e.target.files?.[0];
                         if (file) {
                           setResourceFile(file);
-                          setResourceFileUrl(URL.createObjectURL(file));
                           if (!resourceName) setResourceName(file.name);
                         }
                       }}

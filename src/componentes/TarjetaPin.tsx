@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Bookmark } from "lucide-react";
 import type { Pin, Artist } from "../tipos";
 import { tagClass } from "../ayudantes";
@@ -12,10 +13,29 @@ interface TarjetaPinProps {
 }
 
 export function TarjetaPin({ pin, artist, onSave, onArtist, onPinClick }: TarjetaPinProps) {
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [rowSpan, setRowSpan] = useState(1);
+
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!image) return;
+
+    const updateRowSpan = () => {
+      const rowHeight = 8;
+      const rowGap = 12;
+      setRowSpan(Math.ceil((image.getBoundingClientRect().height + rowGap) / (rowHeight + rowGap)));
+    };
+
+    const observer = new ResizeObserver(updateRowSpan);
+    observer.observe(image);
+    updateRowSpan();
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div className="masonry-item">
+    <div className="masonry-item" style={{ gridRowEnd: `span ${rowSpan}` }}>
       <div className="pin-card" onClick={() => onPinClick(pin)}>
-        <img src={pin.imgUrl} alt={pin.title} style={{ width: "100%", display: "block", borderRadius: "16px" }} loading="lazy" />
+        <img ref={imageRef} src={pin.imgUrl} alt={pin.title} style={{ width: "100%", display: "block", borderRadius: "16px" }} loading="lazy" />
         <div className="overlay">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <span className={tagClass(pin.type)}>{pin.type}</span>

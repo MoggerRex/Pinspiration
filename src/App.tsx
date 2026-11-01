@@ -38,8 +38,8 @@ export default function App() {
   const [savedNotif, setSavedNotif] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [history, setHistory] = useState<Pin[]>([]);
-  // Publicaciones cargadas desde MySQL (perfil propio, perfiles visitados y recién publicadas)
-  const [dbPins, setDbPins] = useState<Pin[]>([]);
+  // Publicaciones publicadas en MySQL (todas, cargadas desde vista_feed_publicaciones)
+  const [feedPins, setFeedPins] = useState<Pin[]>([]);
   const [artists, setArtists] = useState<Artist[]>(ARTISTS);
 
   // ─── Control de Pila de Navegación de Publicaciones ───
@@ -68,7 +68,13 @@ export default function App() {
     return map;
   }, [artists]);
 
-  const allPins = useMemo(() => [...dbPins, ...PINS], [dbPins]);
+  // Feed: primero las publicaciones de la BD (ya vienen de la más nueva a la más vieja)
+  // y después los pines de ejemplo. Si un pin de ejemplo ya existe en MySQL (mismo id),
+  // no se duplica.
+  const allPins = useMemo(() => {
+    const idsBd = new Set(feedPins.map((p) => p.id));
+    return [...feedPins, ...PINS.filter((p) => !idsBd.has(p.id))];
+  }, [feedPins]);
 
   const filteredPins = useMemo(() => {
     let pins = allPins;
@@ -101,8 +107,9 @@ export default function App() {
             handle: u.handle.startsWith("@") ? u.handle.slice(1) : u.handle,
             avatar: fullUrl(u.avatar) || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200",
             bio: u.bio || "Sin descripción aún.",
-            followers: 0,
-            following: 0,
+            followers: Number(u.seguidores) || 0,
+            following: Number(u.siguiendo) || 0,
+            publications: Number(u.publicaciones) || 0,
             headerBg: u.header_bg,
           }));
           setArtists(formattedArtists);
@@ -194,6 +201,20 @@ export default function App() {
     );
   }
 
+  // ─── Feed: todas las publicaciones publicadas, de la más nueva a la más vieja ───
+  // El orden lo aplica el backend (ORDER BY ... DESC) sobre vista_feed_publicaciones.
+  function cargarFeed() {
+    fetch(`${API}/api/feed`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Error HTTP ${res.status} al cargar el feed`);
+        return res.json();
+      })
+      .then((data) => {
+        if (Array.isArray(data)) setFeedPins(data.map(normalizarPinApi));
+      })
+      .catch((err) => console.error("Error al cargar el feed:", err));
+  }
+
   function cargarPerfil(id: string | number) {
     const esPropio = String(id) === String(user?.id);
     fetch(`${API}/api/perfil/${id}`)
@@ -201,18 +222,19 @@ export default function App() {
         if (!res.ok) throw new Error(`Error HTTP ${res.status} al cargar el perfil`);
         return res.json();
       })
-      .then(({ usuario, publicaciones }) => {
-        const pins = (publicaciones as Pin[]).map(normalizarPinApi);
-        // Reemplaza las publicaciones previas de ese usuario por las de la BD
-        setDbPins((prev) => [...pins, ...prev.filter((p) => String(p.artistId) !== String(id))]);
+      .then(({ usuario }) => {
+        // Las publicaciones ya vienen en el feed; aquí solo se actualizan los datos del artista
         aplicarUsuarioApi(usuario, esPropio);
       })
       .catch((err) => console.error("Error al cargar perfil:", err));
   }
 
-  // Al iniciar sesión: cargar el perfil propio (así la personalización persiste entre sesiones y dispositivos)
+  // Al iniciar sesión: cargar el feed completo y el perfil propio (personalización persistente)
   useEffect(() => {
-    if (user?.id) cargarPerfil(user.id);
+    if (user?.id) {
+      cargarFeed();
+      cargarPerfil(user.id);
+    }
   }, [user?.id]);
 
   // Al abrir el perfil de un artista: cargar sus publicaciones
@@ -498,10 +520,7 @@ export default function App() {
         <CrearPublicacion
           currentUser={user}
           onBack={() => setView("feed")}
-          onPublish={(pin) => {
-            setDbPins((prev) => [pin, ...prev]);
-            setTimeout(() => setView("feed"), 800);
-          }}
+          onPublish={() => window.location.reload()}
         />
       )}
 

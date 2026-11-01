@@ -10,6 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 fs.mkdirSync(path.join(UPLOADS_DIR, 'avatares'), { recursive: true });
 fs.mkdirSync(path.join(UPLOADS_DIR, 'publicaciones'), { recursive: true });
+fs.mkdirSync(path.join(UPLOADS_DIR, 'recursos'), { recursive: true });
 
 const app = express();
 
@@ -39,7 +40,17 @@ app.get('/', (req, res) => {
 
 // Endpoint para obtener todos los usuarios de la base de datos
 app.get('/api/usuarios', (req, res) => {
-  db.query('SELECT id, nombre, handle, email, avatar_url AS avatar, bio, header_bg FROM usuarios', (err, results) => {
+  const query = `
+    SELECT
+      u.id, u.nombre, u.handle, u.email,
+      u.avatar_url AS avatar, u.bio, u.header_bg,
+      (SELECT COUNT(*) FROM seguimientos s WHERE s.seguido_id = u.id) AS seguidores,
+      (SELECT COUNT(*) FROM seguimientos s WHERE s.seguidor_id = u.id) AS siguiendo,
+      (SELECT COUNT(*) FROM publicaciones p WHERE p.usuario_id = u.id AND p.estado = 'publicada') AS publicaciones
+    FROM usuarios u
+  `;
+
+  db.query(query, (err, results) => {
     if (err) {
       console.error('Error al consultar usuarios:', err);
       return res.status(500).json({ error: 'Error al consultar usuarios' });
@@ -50,7 +61,8 @@ app.get('/api/usuarios', (req, res) => {
 
 // Endpoint para Iniciar Sesión buscando por Correo y Contraseña
 app.post('/api/login', (req, res) => {
-  const { email, password } = req.body;
+  const email = String(req.body.email ?? '').trim().toLowerCase();
+  const password = String(req.body.password ?? '');
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Faltan credenciales' });
@@ -71,15 +83,41 @@ app.post('/api/login', (req, res) => {
   });
 });
 
-// Endpoint del Feed de publicaciones desde tu vista
-app.get('/api/feed', (req, res) => {
-  db.query('SELECT * FROM vista_feed_publicaciones', (err, results) => {
-    if (err) {
-      console.error('Error al consultar el feed:', err);
-      return res.status(500).json({ error: 'Error al consultar feed' });
-    }
-    res.json(results);
-  });
+// Endpoint del Feed: publicaciones publicadas de la vista vista_feed_publicaciones,
+// de la más reciente a la más antigua (el orden se aplica aquí, no en la vista:
+// MySQL no garantiza el orden interno de una vista al consumirla).
+app.get('/api/feed', async (req, res) => {
+  try {
+    const [rows] = await dbp.query(`
+      SELECT * FROM vista_feed_publicaciones
+      ORDER BY COALESCE(published_at, created_at) DESC, publicacion_pk DESC
+    `);
+
+    res.json(
+      rows.map((r) => {
+        const fecha = r.published_at || r.created_at;
+        return {
+          id: String(r.publicacion_id),
+          artistId: String(r.artista_id),
+          title: r.titulo,
+          type: r.categoria,
+          imgUrl: r.img_url || '',
+          media: r.img_url ? [r.img_url] : [],
+          imgH: 400,
+          publishedAt: fecha
+            ? new Date(fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
+            : undefined,
+          publishedAtISO: fecha ? new Date(fecha).toISOString() : undefined,
+          tags: [],
+          likes: Number(r.total_me_gusta) || 0,
+          saves: Number(r.total_guardados) || 0,
+        };
+      })
+    );
+  } catch (err) {
+    console.error('Error al consultar el feed:', err);
+    res.status(500).json({ error: 'Error al consultar feed' });
+  }
 });
 
 
@@ -310,6 +348,27 @@ const guardarImagenDataUrl = async (dataUrl, carpeta) => {
   return `/uploads/${carpeta}/${nombre}`;
 };
 
+const guardarRecursoDataUrl = async (dataUrl, nombreOriginal) => {
+  const coincidencia = /^data:([^;,]+)?;base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl || '');
+  if (!coincidencia) throw new Error('Archivo de recurso inválido');
+
+  const contenido = Buffer.from(coincidencia[2], 'base64');
+  if (contenido.length === 0 || contenido.length > 50 * 1024 * 1024) {
+    throw new Error('El recurso debe pesar menos de 50 MB');
+  }
+
+  const extensionOriginal = path.extname(String(nombreOriginal || '')).toLowerCase();
+  const extension = /^\.[a-z0-9]{1,10}$/.test(extensionOriginal) ? extensionOriginal : '.bin';
+  const nombre = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${extension}`;
+  await fs.promises.writeFile(path.join(UPLOADS_DIR, 'recursos', nombre), contenido);
+
+  return {
+    url: `/uploads/recursos/${nombre}`,
+    tipoMime: coincidencia[1] || 'application/octet-stream',
+    tamano: contenido.length,
+  };
+};
+
 const borrarArchivosSubidos = (rutas) =>
   rutas.forEach((r) => fs.promises.unlink(path.join(__dirname, r)).catch(() => {}));
 
@@ -336,6 +395,90 @@ const mapUsuarioPerfil = (r) => ({
   siguiendo: Number(r.siguiendo) || 0,
 });
 
+// Datos de sesión: mismo formato que devuelve /api/login
+const mapUsuarioSesion = (r) => ({
+  id: r.id,
+  nombre: r.nombre,
+  handle: r.handle,
+  email: r.email,
+  avatar: r.avatar_url,
+  bio: r.bio,
+  header_bg: r.header_bg,
+  headerBg: r.header_bg,
+});
+
+// POST registro: crea la cuenta con el stored procedure sp_registrar_usuario
+app.post('/api/registro', async (req, res) => {
+  const nombre = String(req.body.nombre ?? '').trim();
+  const handle = String(req.body.handle ?? '').trim();
+  const email = String(req.body.email ?? '').trim().toLowerCase();
+  const password = String(req.body.password ?? '');
+  let avatar = String(req.body.avatar ?? '').trim();
+
+  if (!nombre || !handle || !email || !password) {
+    return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+  }
+  if (nombre.length > 100) {
+    return res.status(400).json({ error: 'El nombre no puede superar 100 caracteres' });
+  }
+  if (!/^@?[A-Za-z0-9._]+$/.test(handle)) {
+    return res.status(400).json({ error: 'El handle solo admite letras, números, puntos y guiones bajos' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    return res.status(400).json({ error: 'El correo electrónico no es válido' });
+  }
+  if (password.length < 3 || password.length > 255) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 3 caracteres' });
+  }
+
+  try {
+    if (avatar.startsWith('data:')) {
+      avatar = await guardarImagenDataUrl(avatar, 'avatares');
+    } else if (avatar) {
+      const propia = /^https?:\/\/[^/]+(\/uploads\/.+)$/i.exec(avatar);
+      if (propia) avatar = propia[1];
+      if (!/^(https?:\/\/|\/uploads\/)/i.test(avatar)) {
+        return res.status(400).json({ error: 'La URL de la foto no es válida' });
+      }
+      if (avatar.length > 2048) {
+        return res.status(400).json({ error: 'La URL de la foto es demasiado larga' });
+      }
+    }
+
+    const [resultSets] = await dbp.query('CALL sp_registrar_usuario(?, ?, ?, ?, ?, ?, ?)', [
+      nombre,
+      handle,
+      email,
+      password,
+      avatar || null,
+      textoOpcional(req.body.bio, 1000),
+      textoOpcional(req.body.headerBg, 512),
+    ]);
+
+    // resultSets[0] = fila del SELECT final del procedure
+    const creado = resultSets[0] && resultSets[0][0];
+    if (!creado) {
+      return res.status(500).json({ error: 'No se pudo crear el usuario' });
+    }
+
+    res.status(201).json(mapUsuarioSesion(creado));
+  } catch (err) {
+    // Errores de validación lanzados con SIGNAL SQLSTATE '45000' en el procedure
+    if (err.sqlState === '45000') {
+      return res.status(400).json({ error: err.sqlMessage });
+    }
+    if (err.errno === 1062) {
+      return res.status(409).json({ error: 'Ese correo o handle ya está registrado' });
+    }
+
+    console.error('Error al registrar usuario:', err);
+    const esImagen = /imagen|formato/i.test(err.message || '');
+    res.status(esImagen ? 400 : 500).json({
+      error: esImagen ? err.message : 'Error al registrar el usuario',
+    });
+  }
+});
+
 const armarExif = (r) => {
   const exif = {};
   if (r.exif_camara) exif['Cámara'] = r.exif_camara;
@@ -346,6 +489,120 @@ const armarExif = (r) => {
   if (r.exif_focal) exif['Focal'] = r.exif_focal;
   return Object.keys(exif).length ? exif : undefined;
 };
+
+// GET detalle: datos de la publicación desde la vista vista_detalle_publicacion.
+// Acepta el id numérico o el código externo de la semilla (por ejemplo "p4").
+// Devuelve también los contadores del autor (seguidores, siguiendo y publicaciones).
+app.get('/api/publicaciones/:id', async (req, res) => {
+  const idParam = String(req.params.id ?? '').trim();
+  if (!idParam) {
+    return res.status(400).json({ error: 'ID de publicación inválido' });
+  }
+
+  try {
+    let rows;
+    if (/^\d+$/.test(idParam)) {
+      [rows] = await dbp.query(
+        'SELECT * FROM vista_detalle_publicacion WHERE publicacion_id = ?',
+        [Number(idParam)]
+      );
+    } else {
+      [rows] = await dbp.query(
+        `SELECT * FROM vista_detalle_publicacion
+         WHERE publicacion_id = (SELECT id FROM publicaciones WHERE codigo_externo = ?)`,
+        [idParam]
+      );
+    }
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Publicación no encontrada' });
+    }
+
+    const r = rows[0];
+
+    // Colecciones hijas: la vista solo trae la portada
+    const [medios] = await dbp.query(
+      'SELECT url_archivo, tipo_mime, orden, paleta_colores FROM medios_publicacion WHERE publicacion_id = ? ORDER BY orden',
+      [r.publicacion_id]
+    );
+    const [etiquetas] = await dbp.query(
+      `SELECT e.nombre
+       FROM etiquetas e
+       JOIN publicacion_etiqueta pe ON pe.etiqueta_id = e.id
+       WHERE pe.publicacion_id = ?
+       ORDER BY e.nombre`,
+      [r.publicacion_id]
+    );
+    const [recursos] = await dbp.query(
+      'SELECT id, nombre, url_archivo, tipo_mime, tamano_bytes FROM recursos WHERE publicacion_id = ? ORDER BY id',
+      [r.publicacion_id]
+    );
+
+    const media = medios.map((m) => m.url_archivo);
+
+    res.json({
+      publicacion: {
+        id: String(r.publicacion_id),
+        artistId: String(r.artista_id),
+        title: r.titulo,
+        description: r.descripcion || undefined,
+        type: r.categoria,
+        software: r.software || undefined,
+        exif: armarExif(r),
+        palette: parseJson(r.paleta_portada) || undefined,
+        media,
+        imgUrl: media[0] || r.portada_url || '',
+        tags: etiquetas.map((e) => e.nombre),
+        resources: recursos.map((x) => ({ name: x.nombre, url: `/api/recursos/${x.id}` })),
+        publishedAt: r.published_at
+          ? new Date(r.published_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
+          : undefined,
+        likes: Number(r.total_me_gusta) || 0,
+        saves: Number(r.total_guardados) || 0,
+        comments: Number(r.total_comentarios) || 0,
+      },
+      artista: {
+        id: r.artista_id,
+        nombre: r.artista_nombre,
+        handle: r.artista_handle,
+        avatar: r.artista_avatar,
+        bio: r.artista_bio,
+        seguidores: Number(r.artista_seguidores) || 0,
+        siguiendo: Number(r.artista_siguiendo) || 0,
+        publicaciones: Number(r.artista_publicaciones) || 0,
+      },
+    });
+  } catch (err) {
+    console.error('Error al consultar el detalle de la publicación:', err);
+    res.status(500).json({ error: 'Error al consultar la publicación' });
+  }
+});
+
+app.get('/api/recursos/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'ID de recurso inválido' });
+  }
+
+  try {
+    const [rows] = await dbp.query('SELECT nombre, url_archivo FROM recursos WHERE id = ? LIMIT 1', [id]);
+    if (rows.length === 0 || !String(rows[0].url_archivo).startsWith('/uploads/recursos/')) {
+      return res.status(404).json({ error: 'Recurso no encontrado' });
+    }
+
+    const recurso = rows[0];
+    const ruta = path.join(UPLOADS_DIR, 'recursos', path.basename(recurso.url_archivo));
+    res.download(ruta, recurso.nombre, (err) => {
+      if (err) {
+        console.error('Error al descargar recurso:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Error al descargar el recurso' });
+      }
+    });
+  } catch (err) {
+    console.error('Error al consultar el recurso:', err);
+    res.status(500).json({ error: 'Error al consultar el recurso' });
+  }
+});
 
 // GET perfil: datos del usuario + sus publicaciones (vista_perfil_usuario)
 app.get('/api/perfil/:usuarioId', async (req, res) => {
@@ -462,7 +719,7 @@ app.put('/api/perfil/:usuarioId', async (req, res) => {
 
 // POST publicación: guarda las imágenes en disco y llama al stored procedure
 app.post('/api/publicaciones', async (req, res) => {
-  const { usuario_id, titulo, descripcion, categoria, software, exif, medios, paleta, etiquetas } = req.body;
+  const { usuario_id, titulo, descripcion, categoria, software, exif, medios, paleta, etiquetas, recurso } = req.body;
 
   const usuarioId = Number(usuario_id);
   if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
@@ -489,9 +746,23 @@ app.post('/api/publicaciones', async (req, res) => {
   const e = categoria === 'Fotografía' && exif ? exif : {};
 
   const rutas = [];
+  const archivosSubidos = [];
+  let publicacionId;
+  let recursoGuardado;
   try {
     for (const m of medios) {
-      rutas.push(await guardarImagenDataUrl(m, 'publicaciones'));
+      const ruta = await guardarImagenDataUrl(m, 'publicaciones');
+      rutas.push(ruta);
+      archivosSubidos.push(ruta);
+    }
+
+    if (recurso) {
+      const archivoRecurso = await guardarRecursoDataUrl(recurso.data, recurso.nombre);
+      archivosSubidos.push(archivoRecurso.url);
+      recursoGuardado = {
+        nombre: textoOpcional(recurso.nombre, 150) || 'Recurso',
+        ...archivoRecurso,
+      };
     }
 
     const [resultSets] = await dbp.query(
@@ -515,11 +786,38 @@ app.post('/api/publicaciones', async (req, res) => {
     );
 
     // resultSets[0] = filas del SELECT final del procedure
-    const publicacionId = resultSets[0][0].publicacion_id;
-    res.status(201).json({ id: String(publicacionId), medios: rutas });
+    publicacionId = resultSets[0][0].publicacion_id;
+    if (recursoGuardado) {
+      const [insercionRecurso] = await dbp.query(
+        'INSERT INTO recursos (publicacion_id, nombre, url_archivo, tipo_mime, tamano_bytes) VALUES (?, ?, ?, ?, ?)',
+        [
+          publicacionId,
+          recursoGuardado.nombre,
+          recursoGuardado.url,
+          recursoGuardado.tipoMime,
+          recursoGuardado.tamano,
+        ]
+      );
+      recursoGuardado.id = insercionRecurso.insertId;
+    }
+
+    res.status(201).json({
+      id: String(publicacionId),
+      medios: rutas,
+      resources: recursoGuardado
+        ? [{ name: recursoGuardado.nombre, url: `/api/recursos/${recursoGuardado.id}` }]
+        : [],
+    });
   } catch (err) {
     console.error('Error al crear publicación:', err);
-    borrarArchivosSubidos(rutas);
+    if (publicacionId) {
+      try {
+        await dbp.query('DELETE FROM publicaciones WHERE id = ?', [publicacionId]);
+      } catch (cleanupError) {
+        console.error('Error al revertir la publicación incompleta:', cleanupError);
+      }
+    }
+    borrarArchivosSubidos(archivosSubidos);
 
     if (err.sqlState === '45000') {
       return res.status(400).json({ error: err.sqlMessage });
@@ -527,13 +825,13 @@ app.post('/api/publicaciones', async (req, res) => {
     if (err.errno === 1452) {
       return res.status(400).json({ error: 'El usuario no existe' });
     }
-    const esImagen = /imagen|formato/i.test(err.message || '');
-    res.status(esImagen ? 400 : 500).json({ error: esImagen ? err.message : 'Error al crear la publicación' });
+    const esArchivo = /imagen|archivo|recurso|formato|pesa/i.test(err.message || '');
+    res.status(esArchivo ? 400 : 500).json({ error: esArchivo ? err.message : 'Error al crear la publicación' });
   }
 });
 
 // Iniciar servidor
-const PORT = 5000;
+const PORT = Number(process.env.PORT) || 5000;
 app.listen(PORT, () => {
   console.log(`Servidor backend corriendo en http://localhost:${PORT}`);
 });

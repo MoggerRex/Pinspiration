@@ -19,6 +19,7 @@ export interface Pin {
   imgUrl: string;
   imgH: number;
   publishedAt?: string;
+  publishedAtISO?: string; // fecha original de la BD, para ordenar el feed
   likes: number;
   saves: number;
 }
@@ -31,6 +32,7 @@ export interface Artist {
   bio: string;
   followers: number;
   following: number;
+  publications?: number; // publicaciones publicadas (vista_detalle_publicacion)
   headerBg?: string; // ← Añade esta línea
 }
 

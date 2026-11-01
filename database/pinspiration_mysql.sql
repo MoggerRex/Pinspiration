@@ -35,6 +35,92 @@ INSERT INTO usuarios (nombre, handle, email, password_hash, avatar_url, bio) VAL
 ('Chuya', '@chuya', 'chuya@pinspiration.com', '123', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=200', 'Fotógrafa profesional y exploradora visual.'),
 ('Arely', '@arely', 'arely@pinspiration.com', '123', 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&q=80&w=200', 'Diseñadora UI/UX apasionada por el arte minimalista.');
 
+-- ==========================================
+-- STORED PROCEDURE: registrar un usuario
+-- ==========================================
+-- En una base ya creada, ejecuta solo este bloque (no hace falta recrear las tablas).
+-- Normaliza el handle (le antepone @) y el correo (minúsculas), rechaza correos
+-- y handles repetidos y devuelve la fila del usuario recién creado.
+-- Las validaciones usan SQLSTATE 45000: Express las convierte en respuestas 400.
+-- Uso desde Express: CALL sp_registrar_usuario(?, ?, ?, ?, ?, ?, ?);
+DROP PROCEDURE IF EXISTS sp_registrar_usuario;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_registrar_usuario(
+  IN p_nombre VARCHAR(100),
+  IN p_handle VARCHAR(50),
+  IN p_email VARCHAR(254),
+  IN p_password VARCHAR(255),
+  IN p_avatar_url VARCHAR(2048),
+  IN p_bio TEXT,
+  IN p_header_bg VARCHAR(512)
+)
+BEGIN
+  DECLARE v_handle VARCHAR(50);
+  DECLARE v_email VARCHAR(254);
+  DECLARE v_avatar VARCHAR(2048);
+  DECLARE v_bio TEXT;
+  DECLARE v_header VARCHAR(512);
+  DECLARE v_usuario_id BIGINT UNSIGNED;
+
+  IF TRIM(IFNULL(p_nombre, '')) = '' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El nombre es obligatorio';
+  END IF;
+
+  IF CHAR_LENGTH(TRIM(p_nombre)) > 100 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El nombre no puede superar 100 caracteres';
+  END IF;
+
+  SET v_handle = TRIM(IFNULL(p_handle, ''));
+  IF v_handle = '' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El handle es obligatorio';
+  END IF;
+
+  IF LEFT(v_handle, 1) <> '@' THEN
+    SET v_handle = CONCAT('@', v_handle);
+  END IF;
+
+  IF CHAR_LENGTH(v_handle) < 3 OR CHAR_LENGTH(v_handle) > 50 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El handle debe tener entre 2 y 49 caracteres';
+  END IF;
+
+  SET v_email = LOWER(TRIM(IFNULL(p_email, '')));
+  IF v_email = '' OR v_email NOT LIKE '%_@_%._%' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El correo electrónico no es válido';
+  END IF;
+
+  IF p_password IS NULL OR CHAR_LENGTH(p_password) < 3 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La contraseña debe tener al menos 3 caracteres';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM usuarios WHERE email = v_email) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ese correo ya está registrado';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM usuarios WHERE handle = v_handle) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ese handle ya está en uso';
+  END IF;
+
+  SET v_avatar = NULLIF(TRIM(IFNULL(p_avatar_url, '')), '');
+  SET v_bio = NULLIF(TRIM(IFNULL(p_bio, '')), '');
+  SET v_header = NULLIF(TRIM(IFNULL(p_header_bg, '')), '');
+  IF v_header IS NULL THEN
+    SET v_header = 'linear-gradient(0deg, #13191d 5%, #00385a 100%)';
+  END IF;
+
+  INSERT INTO usuarios (nombre, handle, email, password_hash, avatar_url, bio, header_bg)
+  VALUES (TRIM(p_nombre), v_handle, v_email, p_password, v_avatar, v_bio, v_header);
+
+  SET v_usuario_id = LAST_INSERT_ID();
+
+  SELECT id, nombre, handle, email, avatar_url, bio, header_bg
+  FROM usuarios
+  WHERE id = v_usuario_id;
+END$$
+
+DELIMITER ;
+
 -- En una base ya creada, aplicar una sola vez:
 -- ALTER TABLE publicaciones ADD COLUMN codigo_externo VARCHAR(100) NULL,
 --   ADD UNIQUE KEY uq_publicaciones_codigo_externo (codigo_externo);
@@ -195,9 +281,12 @@ CREATE TABLE historial_visualizacion (
 ) ENGINE=InnoDB;
 
 -- Feed: una fila por publicacion publicada; orden y paginacion van en el SELECT consumidor.
+-- publicacion_pk es el id numérico: sirve para ordenar de forma estable
+-- (publicacion_id mezcla códigos externos como "p4" con ids numéricos).
 CREATE VIEW vista_feed_publicaciones AS
 SELECT
   COALESCE(p.codigo_externo, CAST(p.id AS CHAR)) AS publicacion_id,
+  p.id AS publicacion_pk,
   p.titulo,
   p.categoria,
   p.created_at,
@@ -258,7 +347,10 @@ SELECT
    WHERE seg.seguido_id = u.id) AS artista_seguidores,
   (SELECT COUNT(*)
    FROM seguimientos seg
-   WHERE seg.seguidor_id = u.id) AS artista_siguiendo
+   WHERE seg.seguidor_id = u.id) AS artista_siguiendo,
+  (SELECT COUNT(*)
+   FROM publicaciones pa
+   WHERE pa.usuario_id = u.id AND pa.estado = 'publicada') AS artista_publicaciones
 FROM publicaciones p
 JOIN usuarios u ON u.id = p.usuario_id
 LEFT JOIN medios_publicacion portada
@@ -509,7 +601,9 @@ DELIMITER ;
 -- ==========================================
 
 -- 1. Vista del Feed Principal
-SELECT * FROM vista_feed_publicaciones;
+-- El orden se aplica al consumir la vista: más recientes primero.
+SELECT * FROM vista_feed_publicaciones
+ORDER BY COALESCE(published_at, created_at) DESC, publicacion_pk DESC;
 
 -- 2. Vista del Detalle de Publicación
 SELECT * FROM vista_detalle_publicacion;

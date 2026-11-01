@@ -6,6 +6,7 @@ import {
   type Variants,
   type Transition,
 } from 'framer-motion';
+import { API, fullUrl } from '../api';
 import './Login.css';
 
 interface LoginProps {
@@ -184,7 +185,9 @@ export function Login({ onLogin }: LoginProps) {
   const [password, setPassword] = useState('');
   const [avatar, setAvatar] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
+  // Usuario ya creado en MySQL: se completa con la foto en el paso de avatar
   const [tempUser, setTempUser] = useState<any>(null);
 
   const toggleView = () => {
@@ -202,7 +205,7 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
     }
 
     try {
-      const response = await fetch('http://localhost:5000/api/login', {
+      const response = await fetch(`${API}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -227,7 +230,8 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
     }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  // 1) Crea la cuenta en MySQL con el stored procedure sp_registrar_usuario
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -235,32 +239,85 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
       setError('Por favor, completa todos los campos requeridos.');
       return;
     }
+    if (password.length < 3) {
+      setError('La contraseña debe tener al menos 3 caracteres.');
+      return;
+    }
 
-    const cleanHandle = handle.startsWith('@') ? handle : `@${handle}`;
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${API}/api/registro`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre, handle, email, password }),
+      });
 
-    const newUser = {
-      id: 'u-' + Date.now(),
-      nombre,
-      handle: cleanHandle,
-      email,
-      bio: 'Entusiasta del arte y la creatividad visual.',
-      headerBg: 'linear-gradient(0deg, #13191d 5%, #00385a 100%)',
-      avatar: '',
-    };
+      const data = await response.json();
 
-    setTempUser(newUser);
-    setStep('avatar');
+      if (!response.ok) {
+        setError(data.error || 'No se pudo crear la cuenta.');
+        return;
+      }
+
+      // data trae el usuario real de la BD (id numérico, handle ya normalizado con @)
+      setTempUser({ ...data, avatar: '' });
+      setStep('avatar');
+    } catch (err) {
+      console.error('Error al registrar usuario:', err);
+      setError('No se pudo conectar con el servidor. Revisa que el backend esté corriendo.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleFinishRegister = (avatarUrl?: string) => {
-    const defaultAvatar = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200';
-    const finalUser = {
-      ...tempUser,
-      avatar: avatarUrl || defaultAvatar,
-    };
+  // 2) Guarda la foto elegida y entra con la cuenta que ya quedó creada en MySQL
+  const handleFinishRegister = async (avatarUrl?: string) => {
+    if (!tempUser?.id) {
+      setError('No se pudo completar el registro. Vuelve a intentarlo.');
+      return;
+    }
 
-    localStorage.setItem('pinspiration_user', JSON.stringify(finalUser));
-    onLogin(finalUser);
+    setError('');
+    const defaultAvatar = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200';
+    const foto = (avatarUrl || '').trim();
+
+    // Sin foto: se entra directamente con los datos guardados
+    if (!foto) {
+      const userData = { ...tempUser, avatar: defaultAvatar };
+      localStorage.setItem('pinspiration_user', JSON.stringify(userData));
+      onLogin(userData);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${API}/api/perfil/${tempUser.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nombre: tempUser.nombre,
+          bio: tempUser.bio || '',
+          avatar: foto,
+          headerBg: tempUser.headerBg || tempUser.header_bg || 'linear-gradient(0deg, #13191d 5%, #00385a 100%)',
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || 'No se pudo guardar la foto de perfil.');
+        return;
+      }
+
+      const userData = { ...tempUser, ...data, avatar: fullUrl(data.avatar) || defaultAvatar };
+      localStorage.setItem('pinspiration_user', JSON.stringify(userData));
+      onLogin(userData);
+    } catch (err) {
+      console.error('Error al guardar el avatar:', err);
+      setError('No se pudo conectar con el servidor. Revisa que el backend esté corriendo.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleAvatarFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -277,7 +334,7 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
   const handleDemoLogin = async () => {
     setError('');
     try {
-      const response = await fetch('http://localhost:5000/api/login', {
+      const response = await fetch(`${API}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: 'leo@pinspiration.com', password: '123' }),
@@ -369,8 +426,8 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                       />
-                      <motion.button type="submit" whileTap={{ scale: 0.97 }}>
-                        REGISTRARSE
+                      <motion.button type="submit" whileTap={{ scale: 0.97 }} disabled={submitting}>
+                        {submitting ? 'CREANDO CUENTA…' : 'REGISTRARSE'}
                       </motion.button>
                     </form>
                   </Item>
@@ -446,6 +503,8 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
                 <h3>¿Quieres añadir una foto de perfil?</h3>
                 <p className="avatar-sub">Puedes subir una imagen ahora o configurarla después.</p>
 
+                {error && <ErrorMessage message={error} />}
+
                 <div className="avatar-preview-box">
                   {avatar ? (
                     <img src={avatar} alt="Preview" className="avatar-preview-img" />
@@ -476,16 +535,18 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
                   <button
                     type="button"
                     onClick={() => handleFinishRegister('')}
-                    style={{ flex: 1, padding: '10px', borderRadius: 12, cursor: 'pointer', background: '#13191d', border: '1px solid #242f38', color: '#e8eef2', fontWeight: 600 }}
+                    disabled={submitting}
+                    style={{ flex: 1, padding: '10px', borderRadius: 12, cursor: 'pointer', background: '#13191d', border: '1px solid #242f38', color: '#e8eef2', fontWeight: 600, opacity: submitting ? 0.6 : 1 }}
                   >
                     Omitir
                   </button>
                   <button
                     type="button"
                     onClick={() => handleFinishRegister(avatar)}
-                    style={{ flex: 1, padding: '10px', borderRadius: 12, cursor: 'pointer', background: '#00385a', border: 'none', color: '#e8eef2', fontWeight: 600 }}
+                    disabled={submitting}
+                    style={{ flex: 1, padding: '10px', borderRadius: 12, cursor: 'pointer', background: '#00385a', border: 'none', color: '#e8eef2', fontWeight: 600, opacity: submitting ? 0.6 : 1 }}
                   >
-                    Guardar y Entrar
+                    {submitting ? 'Guardando…' : 'Guardar y Entrar'}
                   </button>
                 </div>
               </div>

@@ -5,6 +5,7 @@ import { ME } from "../datos";
 import { tagClass, formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
 import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight } from "lucide-react";
+import { API, fullUrl } from "../api";
 import "./DetalleObra.css";
 
 // Interface para los comentarios
@@ -141,6 +142,65 @@ function getCategoryClass(type: string): string {
 
 export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onArtist, onSave, onPin, onSelectCategory, onSelectTag }: DetalleObraProps) {
   const artist = artistMap[pin.artistId];
+
+  // Contadores reales del autor desde vista_detalle_publicacion (GET /api/publicaciones/:id).
+  // Los pines de ejemplo (ids "p1", "p2"...) conservan los datos locales de src/datos.ts.
+  const [artistaApi, setArtistaApi] = useState<{
+    seguidores: number;
+    siguiendo: number;
+    publicaciones: number;
+  } | null>(null);
+  const [detalleExif, setDetalleExif] = useState(pin.exif);
+  const [detalleSoftware, setDetalleSoftware] = useState(pin.software);
+  const [detalleDescripcion, setDetalleDescripcion] = useState(pin.description);
+  const [detalleTags, setDetalleTags] = useState(pin.tags);
+  const [detalleMedia, setDetalleMedia] = useState<string[]>(pin.media?.length ? pin.media : [pin.imgUrl]);
+  const [detalleRecursos, setDetalleRecursos] = useState(pin.resources || []);
+
+  useEffect(() => {
+    setArtistaApi(null);
+    setDetalleExif(pin.exif);
+    setDetalleSoftware(pin.software);
+    setDetalleDescripcion(pin.description);
+    setDetalleTags(pin.tags);
+    setDetalleMedia(pin.media?.length ? pin.media : [pin.imgUrl]);
+    setDetalleRecursos(pin.resources || []);
+    if (!/^\d+$/.test(String(pin.id))) return;
+
+    let activo = true;
+    fetch(`${API}/api/publicaciones/${pin.id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (activo && data?.publicacion) {
+          setDetalleExif(data.publicacion.exif);
+          setDetalleSoftware(data.publicacion.software);
+          setDetalleDescripcion(data.publicacion.description);
+          setDetalleTags(data.publicacion.tags || pin.tags);
+          if (Array.isArray(data.publicacion.media) && data.publicacion.media.length > 0) {
+            setDetalleMedia(data.publicacion.media.map(fullUrl));
+          }
+          if (Array.isArray(data.publicacion.resources)) {
+            setDetalleRecursos(data.publicacion.resources.map((resource: { name: string; url?: string }) => ({
+              ...resource,
+              url: fullUrl(resource.url),
+            })));
+          }
+        }
+        if (activo && data?.artista) {
+          setArtistaApi({
+            seguidores: Number(data.artista.seguidores) || 0,
+            siguiendo: Number(data.artista.siguiendo) || 0,
+            publicaciones: Number(data.artista.publicaciones) || 0,
+          });
+        }
+      })
+      .catch((err) => console.error("Error al cargar el detalle de la publicación:", err));
+
+    return () => {
+      activo = false;
+    };
+  }, [pin.id]);
+
   const [lightbox, setLightbox] = useState(false);
   const [descModalOpen, setDescModalOpen] = useState(false);
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
@@ -170,9 +230,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
   const [commentsCount, setCommentsCount] = useState((pin as any).commentsCount ?? 85);
 
   // Arreglo de medios adjuntos
-  const mediaList: string[] = (pin as any).media && (pin as any).media.length > 0
-    ? (pin as any).media
-    : ((pin as any).imgUrls && (pin as any).imgUrls.length > 0 ? (pin as any).imgUrls : [pin.imgUrl]);
+  const mediaList = detalleMedia;
   const [activeMediaIdx, setActiveMediaIdx] = useState(0);
 
   // Resetea el índice activo cuando cambia de publicación
@@ -336,6 +394,11 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
   const moreGrid = [...related, ...others].slice(0, 15);
 
   const currentMediaUrl = mediaList[activeMediaIdx] || pin.imgUrl;
+
+  // Contadores del autor: los reales de la vista si ya llegaron, si no los del mapa de artistas
+  const artistaSeguidores = artistaApi?.seguidores ?? artist.followers;
+  const artistaSiguiendo = artistaApi?.siguiendo ?? artist.following;
+  const artistaPublicaciones = artistaApi?.publicaciones ?? artist.publications ?? 0;
 
   return (
     <div style={{ minHeight: "100vh", background: "#13191d" }}>
@@ -578,7 +641,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
             {(() => {
               const MAX_TAG_CHARS = 40;
               let used = 0;
-              const visibleTags = pin.tags.slice(0, 5).filter(t => {
+              const visibleTags = detalleTags.slice(0, 5).filter(t => {
                 const cost = t.length + 1;
                 if (used + cost <= MAX_TAG_CHARS) { used += cost; return true; }
                 return false;
@@ -607,8 +670,8 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
                   <div style={{ width: 1, height: 22, background: "#242f38", borderRadius: 1, flexShrink: 0 }} />
 
                   <div style={{ flexShrink: 0 }}>
-                    {pin.resources && pin.resources.length > 0 ? (
-                      <ResourcesPill resources={pin.resources} />
+                    {detalleRecursos.length > 0 ? (
+                      <ResourcesPill resources={detalleRecursos} />
                     ) : (
                       <span style={{ fontSize: 12, color: "#4a5e6a", background: "#13191d", border: "1px solid #1f2a32", borderRadius: 20, padding: "3px 12px", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -666,8 +729,12 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
                   <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 12, color: "#7a909f" }}>@{artist.handle}</span>
                     <span style={{ fontSize: 12, color: "#7a909f" }}>·</span>
-                    <span style={{ fontSize: 12 }}><strong style={{ color: "#e8eef2" }}>{formatNum(artist.followers)}</strong><span style={{ color: "#7a909f" }}> seg</span></span>
-                    <span style={{ fontSize: 12 }}><strong style={{ color: "#e8eef2" }}>{formatNum(artist.following)}</strong><span style={{ color: "#7a909f" }}> sig</span></span>
+                    <span style={{ fontSize: 12 }}>
+                      <strong style={{ color: "#e8eef2" }}>{formatNum(artistaPublicaciones)}</strong>
+                      <span style={{ color: "#7a909f" }}> {artistaPublicaciones === 1 ? "publicación" : "publicaciones"}</span>
+                    </span>
+                    <span style={{ fontSize: 12 }}><strong style={{ color: "#e8eef2" }}>{formatNum(artistaSeguidores)}</strong><span style={{ color: "#7a909f" }}> seg</span></span>
+                    <span style={{ fontSize: 12 }}><strong style={{ color: "#e8eef2" }}>{formatNum(artistaSiguiendo)}</strong><span style={{ color: "#7a909f" }}> sig</span></span>
                   </div>
                 </div>
                 <button
@@ -813,7 +880,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
             </div>
 
             {/* Contenedor de Descripción interactivo */}
-            {(pin.description || pin.publishedAt) && (
+            {(detalleDescripcion || pin.publishedAt) && (
               <button
                 onClick={() => setDescModalOpen(true)}
                 style={{
@@ -850,7 +917,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
                   </span>
                 </div>
 
-                {pin.description && (
+                {detalleDescripcion && (
                   <p style={{
                     margin: 0,
                     fontSize: 14,
@@ -862,7 +929,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
                     overflow: "hidden",
                     wordBreak: "break-word"
                   }}>
-                    {pin.description}
+                    {detalleDescripcion}
                   </p>
                 )}
 
@@ -876,14 +943,14 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
 
             {/* Fila de Software/EXIF y Paleta dominante Dinámica */}
             <div style={{ display: "flex", gap: 16, alignItems: "stretch", flexWrap: "wrap" }}>
-              {pin.type !== "Fotografía" && pin.software && (
+              {pin.type !== "Fotografía" && detalleSoftware && (
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 5, padding: "10px 14px", background: "#1a2228", borderRadius: 14, border: "1px solid #242f38" }}>
                   <p style={{ margin: 0, fontSize: 10, color: "#7a909f", textTransform: "uppercase", letterSpacing: "0.7px", fontWeight: 600, whiteSpace: "nowrap" }}>Software / Técnica</p>
-                  <p style={{ margin: 0, fontSize: 13, color: "#b0c8d8", fontWeight: 500, whiteSpace: "nowrap" }}>{pin.software}</p>
+                  <p style={{ margin: 0, fontSize: 13, color: "#b0c8d8", fontWeight: 500, whiteSpace: "nowrap" }}>{detalleSoftware}</p>
                 </div>
               )}
-              {pin.type === "Fotografía" && pin.exif && (() => {
-                const entries = Object.entries(pin.exif);
+              {pin.type === "Fotografía" && detalleExif && (() => {
+                const entries = Object.entries(detalleExif);
                 const row1 = entries.slice(0, 2) as [string, string][];
                 const row2 = entries.slice(2)   as [string, string][];
                 const chip = ([k, v]: [string, string]) => (
@@ -1029,7 +1096,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
                 whiteSpace: "pre-line",
                 wordBreak: "break-word"
               }}>
-                {pin.description || "Sin descripción disponible."}
+                {detalleDescripcion || "Sin descripción disponible."}
               </p>
             </div>
 

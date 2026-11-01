@@ -19,7 +19,7 @@ export function Home({ pins, search, artistMap, onSave, onArtist, onPinClick }: 
           <p style={{ fontSize: 14 }}>Intenta con otro término o categoría.</p>
         </div>
       ) : (
-        <div className="masonry-grid">
+        <div className="feed-grid">
           {pins.map((pin) => (
             <TarjetaPin key={pin.id} pin={pin} artist={artistMap[pin.artistId]} onSave={onSave} onArtist={onArtist} onPinClick={onPinClick} />
           ))}

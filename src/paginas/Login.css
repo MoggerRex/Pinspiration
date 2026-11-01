@@ -243,6 +243,16 @@
   background: #0a5a8a;
 }
 
+.form button[type="submit"]:disabled {
+  background: #24485e;
+  cursor: not-allowed;
+}
+
+/* Error dentro del paso de avatar */
+.avatar-step .login-error {
+  margin-bottom: 16px;
+}
+
 .login-error {
   background: #3a1212;
   border: 1px solid #7a2020;
