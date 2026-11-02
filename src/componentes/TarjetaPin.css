@@ -18,6 +18,27 @@
   box-shadow: 0 8px 32px rgba(0, 56, 90, 0.4);
 }
 
+.pin-card-selected {
+  outline: 3px solid #5db8e8;
+  outline-offset: -3px;
+}
+
+.pin-card-selecting .overlay {
+  opacity: 1;
+}
+
+.selection-toggle {
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  background: rgba(19, 25, 29, 0.72);
+  cursor: pointer;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.8));
+}
+
 .pin-card .overlay {
   position: absolute;
   inset: 0;
@@ -46,6 +67,27 @@
   cursor: pointer;
   transition: background 0.15s ease;
   align-self: flex-end;
+}
+
+.delete-btn {
+  background: #8b2635;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 8px 14px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.delete-btn:hover {
+  background: #a83243;
 }
 
 .save-btn:hover {
@@ -94,5 +136,14 @@
     align-items: center;
     justify-content: center;
     background: rgba(0, 56, 90, 0.9);
+  }
+
+  .delete-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 50%;
+    justify-content: center;
+    background: rgba(139, 38, 53, 0.95);
   }
 }

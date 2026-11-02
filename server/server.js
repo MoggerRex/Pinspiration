@@ -83,6 +83,26 @@ app.post('/api/login', (req, res) => {
   });
 });
 
+const mapFeedPin = (r) => {
+  const fecha = r.published_at || r.created_at;
+  return {
+    id: String(r.publicacion_id),
+    artistId: String(r.artista_id),
+    title: r.titulo,
+    type: r.categoria,
+    imgUrl: r.img_url || '',
+    media: r.img_url ? [r.img_url] : [],
+    imgH: 400,
+    publishedAt: fecha
+      ? new Date(fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
+      : undefined,
+    publishedAtISO: fecha ? new Date(fecha).toISOString() : undefined,
+    tags: r.etiquetas ? r.etiquetas.split(',').filter(Boolean) : [],
+    likes: Number(r.total_me_gusta) || 0,
+    saves: Number(r.total_guardados) || 0,
+  };
+};
+
 // Endpoint del Feed: publicaciones publicadas de la vista vista_feed_publicaciones,
 // de la más reciente a la más antigua (el orden se aplica aquí, no en la vista:
 // MySQL no garantiza el orden interno de una vista al consumirla).
@@ -93,27 +113,7 @@ app.get('/api/feed', async (req, res) => {
       ORDER BY COALESCE(published_at, created_at) DESC, publicacion_pk DESC
     `);
 
-    res.json(
-      rows.map((r) => {
-        const fecha = r.published_at || r.created_at;
-        return {
-          id: String(r.publicacion_id),
-          artistId: String(r.artista_id),
-          title: r.titulo,
-          type: r.categoria,
-          imgUrl: r.img_url || '',
-          media: r.img_url ? [r.img_url] : [],
-          imgH: 400,
-          publishedAt: fecha
-            ? new Date(fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
-            : undefined,
-          publishedAtISO: fecha ? new Date(fecha).toISOString() : undefined,
-          tags: [],
-          likes: Number(r.total_me_gusta) || 0,
-          saves: Number(r.total_guardados) || 0,
-        };
-      })
-    );
+    res.json(rows.map(mapFeedPin));
   } catch (err) {
     console.error('Error al consultar el feed:', err);
     res.status(500).json({ error: 'Error al consultar feed' });
@@ -272,7 +272,23 @@ app.post('/api/tableros/guardar', (req, res) => {
           console.error('Error al guardar en tablero:', errSave);
           return res.status(500).json({ error: 'Error al guardar en tablero' });
         }
-        res.json({ mensaje: 'Publicación guardada exitosamente' });
+        db.query(
+          `SELECT COUNT(DISTINCT t.usuario_id) AS total_guardados
+           FROM tablero_publicacion tp
+           JOIN tableros t ON t.id = tp.tablero_id
+           WHERE tp.publicacion_id = ?`,
+          [validPubId],
+          (errCount, countRows) => {
+            if (errCount) {
+              console.error('Error al consultar el contador de guardados:', errCount);
+              return res.status(500).json({ error: 'El pin se guardó, pero no se pudo actualizar su contador' });
+            }
+            res.json({
+              mensaje: 'Publicación guardada exitosamente',
+              savesCount: Number(countRows[0].total_guardados) || 0,
+            });
+          }
+        );
       });
     });
   });
@@ -330,6 +346,288 @@ const dbp = db.promise();
 
 const CATEGORIAS = ['2D', '3D', 'Fotografía', 'Edición'];
 const EXT_POR_MIME = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+
+const parseUsuarioId = (value) => {
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+app.get('/api/usuarios/:usuarioId/seguidores', async (req, res) => {
+  const usuarioId = parseUsuarioId(req.params.usuarioId);
+  if (!usuarioId) return res.status(400).json({ error: 'ID de usuario inválido' });
+
+  try {
+    const [rows] = await dbp.query(
+      'SELECT * FROM vista_seguidores_usuario WHERE usuario_id = ? ORDER BY nombre',
+      [usuarioId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error al consultar seguidores:', err);
+    res.status(500).json({ error: 'Error al consultar seguidores' });
+  }
+});
+
+app.get('/api/usuarios/:usuarioId/seguidos', async (req, res) => {
+  const usuarioId = parseUsuarioId(req.params.usuarioId);
+  if (!usuarioId) return res.status(400).json({ error: 'ID de usuario inválido' });
+
+  try {
+    const [rows] = await dbp.query(
+      'SELECT * FROM vista_seguidos_usuario WHERE usuario_id = ? ORDER BY nombre',
+      [usuarioId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error al consultar artistas seguidos:', err);
+    res.status(500).json({ error: 'Error al consultar artistas seguidos' });
+  }
+});
+
+app.get('/api/seguimientos/:seguidorId/:seguidoId', async (req, res) => {
+  const seguidorId = parseUsuarioId(req.params.seguidorId);
+  const seguidoId = parseUsuarioId(req.params.seguidoId);
+  if (!seguidorId || !seguidoId) return res.status(400).json({ error: 'ID de usuario inválido' });
+
+  try {
+    const [[row]] = await dbp.query(
+      'SELECT EXISTS(SELECT 1 FROM seguimientos WHERE seguidor_id = ? AND seguido_id = ?) AS siguiendo',
+      [seguidorId, seguidoId]
+    );
+    res.json({ following: Boolean(row.siguiendo) });
+  } catch (err) {
+    console.error('Error al consultar seguimiento:', err);
+    res.status(500).json({ error: 'Error al consultar seguimiento' });
+  }
+});
+
+app.put('/api/seguimientos/:seguidorId/:seguidoId', async (req, res) => {
+  const seguidorId = parseUsuarioId(req.params.seguidorId);
+  const seguidoId = parseUsuarioId(req.params.seguidoId);
+  const following = req.body.following;
+  if (!seguidorId || !seguidoId || typeof following !== 'boolean') {
+    return res.status(400).json({ error: 'Usuario o estado de seguimiento inválido' });
+  }
+  if (seguidorId === seguidoId) {
+    return res.status(400).json({ error: 'No puedes seguirte a ti mismo' });
+  }
+
+  try {
+    const [users] = await dbp.query(
+      'SELECT id FROM usuarios WHERE id IN (?, ?)',
+      [seguidorId, seguidoId]
+    );
+    if (users.length !== 2) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    if (following) {
+      await dbp.query(
+        'INSERT IGNORE INTO seguimientos (seguidor_id, seguido_id) VALUES (?, ?)',
+        [seguidorId, seguidoId]
+      );
+    } else {
+      await dbp.query(
+        'DELETE FROM seguimientos WHERE seguidor_id = ? AND seguido_id = ?',
+        [seguidorId, seguidoId]
+      );
+    }
+
+    const [[counts]] = await dbp.query(
+      `SELECT
+         (SELECT COUNT(*) FROM seguimientos WHERE seguido_id = ?) AS followersCount,
+         (SELECT COUNT(*) FROM seguimientos WHERE seguidor_id = ?) AS followingCount`,
+      [seguidoId, seguidorId]
+    );
+    res.json({
+      following,
+      followersCount: Number(counts.followersCount) || 0,
+      followingCount: Number(counts.followingCount) || 0,
+    });
+  } catch (err) {
+    console.error('Error al actualizar seguimiento:', err);
+    res.status(500).json({ error: 'Error al actualizar seguimiento' });
+  }
+});
+
+app.get('/api/intereses/opciones', async (req, res) => {
+  try {
+    const [rows] = await dbp.query(
+      `SELECT e.nombre
+       FROM etiquetas e
+       JOIN publicacion_etiqueta pe ON pe.etiqueta_id = e.id
+       JOIN publicaciones p ON p.id = pe.publicacion_id AND p.estado = 'publicada'
+       GROUP BY e.id, e.nombre
+       ORDER BY COUNT(DISTINCT p.id) DESC, e.nombre
+       LIMIT 30`
+    );
+    res.json({ categorias: CATEGORIAS, etiquetas: rows.map((row) => row.nombre) });
+  } catch (err) {
+    console.error('Error al consultar opciones de intereses:', err);
+    res.status(500).json({ error: 'Error al consultar opciones de intereses' });
+  }
+});
+
+app.put('/api/usuarios/:usuarioId/intereses', async (req, res) => {
+  const usuarioId = parseUsuarioId(req.params.usuarioId);
+  if (!usuarioId) return res.status(400).json({ error: 'ID de usuario inválido' });
+
+  if (!Array.isArray(req.body.categorias) || !Array.isArray(req.body.etiquetas)) {
+    return res.status(400).json({ error: 'Las categorías y etiquetas deben ser listas' });
+  }
+  const categorias = req.body.categorias;
+  const etiquetas = req.body.etiquetas;
+  if (categorias.some((value) => !CATEGORIAS.includes(value)) || categorias.length > CATEGORIAS.length) {
+    return res.status(400).json({ error: 'Hay una categoría de interés inválida' });
+  }
+  if (etiquetas.length > 20 || etiquetas.some((value) => typeof value !== 'string' || !value.trim() || value.trim().length > 50)) {
+    return res.status(400).json({ error: 'Las etiquetas de interés deben tener entre 1 y 50 caracteres (máximo 20)' });
+  }
+
+  const categoriasUnicas = [...new Set(categorias.map((value) => String(value)))];
+  const intereses = categoriasUnicas.map((valor) => ({ tipo: 'categoria', valor }));
+  const etiquetasUnicas = [...new Map(
+    etiquetas.map((value) => [value.trim().toLocaleLowerCase(), value.trim()])
+  ).values()];
+  intereses.push(...etiquetasUnicas.map((valor) => ({ tipo: 'etiqueta', valor })));
+
+  let connection;
+  try {
+    const [users] = await dbp.query('SELECT id FROM usuarios WHERE id = ?', [usuarioId]);
+    if (users.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    connection = await dbp.getConnection();
+    await connection.beginTransaction();
+    await connection.query('DELETE FROM preferencias_usuario WHERE usuario_id = ?', [usuarioId]);
+    if (intereses.length > 0) {
+      await connection.query(
+        'INSERT INTO preferencias_usuario (usuario_id, tipo, valor) VALUES ?',
+        [intereses.map(({ tipo, valor }) => [usuarioId, tipo, valor])]
+      );
+    }
+    await connection.commit();
+    res.json({ categorias, etiquetas: etiquetasUnicas });
+  } catch (err) {
+    if (connection) await connection.rollback();
+    console.error('Error al guardar intereses:', err);
+    const usuarioInexistente = err.errno === 1452;
+    res.status(usuarioInexistente ? 404 : 500).json({
+      error: usuarioInexistente ? 'Usuario no encontrado' : 'Error al guardar intereses',
+    });
+  } finally {
+    connection?.release();
+  }
+});
+
+app.get('/api/feed/siguiendo/:usuarioId', async (req, res) => {
+  const usuarioId = parseUsuarioId(req.params.usuarioId);
+  if (!usuarioId) return res.status(400).json({ error: 'ID de usuario inválido' });
+
+  try {
+    const [rows] = await dbp.query(
+      `SELECT f.*
+       FROM vista_feed_publicaciones f
+       JOIN seguimientos s ON s.seguido_id = f.artista_id
+       WHERE s.seguidor_id = ?
+       ORDER BY COALESCE(f.published_at, f.created_at) DESC, f.publicacion_pk DESC`,
+      [usuarioId]
+    );
+    res.json(rows.map(mapFeedPin));
+  } catch (err) {
+    console.error('Error al consultar el feed de seguidos:', err);
+    res.status(500).json({ error: 'Error al consultar el feed de seguidos' });
+  }
+});
+
+app.get('/api/feed/para-ti/:usuarioId', async (req, res) => {
+  const usuarioId = parseUsuarioId(req.params.usuarioId);
+  if (!usuarioId) return res.status(400).json({ error: 'ID de usuario inválido' });
+
+  try {
+    const [rows] = await dbp.query(
+        `WITH senales AS (
+           SELECT publicacion_id, 3 AS peso FROM me_gusta WHERE usuario_id = ?
+           UNION ALL
+           SELECT tp.publicacion_id, 4 AS peso
+           FROM tablero_publicacion tp
+           JOIN tableros t ON t.id = tp.tablero_id
+           WHERE t.usuario_id = ?
+           UNION ALL
+           SELECT publicacion_id, 1 AS peso FROM historial_visualizacion WHERE usuario_id = ?
+         ),
+         afinidad_categoria AS (
+           SELECT p.categoria, SUM(s.peso) AS puntuacion
+           FROM senales s
+           JOIN publicaciones p ON p.id = s.publicacion_id
+           WHERE p.estado = 'publicada'
+           GROUP BY p.categoria
+         ),
+         afinidad_etiqueta AS (
+           SELECT e.id AS etiqueta_id, SUM(s.peso) AS puntuacion
+           FROM senales s
+           JOIN publicaciones p ON p.id = s.publicacion_id
+           JOIN publicacion_etiqueta pe ON pe.publicacion_id = p.id
+           JOIN etiquetas e ON e.id = pe.etiqueta_id
+           WHERE p.estado = 'publicada'
+           GROUP BY e.id
+         ),
+         afinidad_artista AS (
+           SELECT p.usuario_id, SUM(s.peso) AS puntuacion
+           FROM senales s
+           JOIN publicaciones p ON p.id = s.publicacion_id
+           WHERE p.estado = 'publicada'
+           GROUP BY p.usuario_id
+         ),
+         preferencias AS (
+           SELECT tipo, valor FROM preferencias_usuario WHERE usuario_id = ?
+         )
+         SELECT f.*,
+           (
+             COALESCE((SELECT ac.puntuacion FROM afinidad_categoria ac WHERE ac.categoria = f.categoria), 0)
+             + COALESCE((
+                 SELECT SUM(ae.puntuacion)
+                 FROM afinidad_etiqueta ae
+                 JOIN publicacion_etiqueta pe ON pe.etiqueta_id = ae.etiqueta_id
+                 WHERE pe.publicacion_id = f.publicacion_pk
+               ), 0)
+             + COALESCE((
+                 SELECT SUM(CASE WHEN pr.valor = f.categoria THEN 5 ELSE 0 END)
+                 FROM preferencias pr WHERE pr.tipo = 'categoria'
+               ), 0)
+             + COALESCE((
+                 SELECT SUM(3)
+                 FROM preferencias pr
+                 JOIN etiquetas e ON LOWER(e.nombre) = LOWER(pr.valor)
+                 JOIN publicacion_etiqueta pe ON pe.etiqueta_id = e.id
+                 WHERE pr.tipo = 'etiqueta' AND pe.publicacion_id = f.publicacion_pk
+               ), 0)
+             + CASE WHEN EXISTS (
+                 SELECT 1 FROM seguimientos s
+                 WHERE s.seguidor_id = ? AND s.seguido_id = f.artista_id
+               ) THEN 8 ELSE 0 END
+             + COALESCE((
+                 SELECT aa.puntuacion * 0.5 FROM afinidad_artista aa
+                 WHERE aa.usuario_id = f.artista_id
+               ), 0)
+             + LEAST(5, LOG(1 + f.total_me_gusta + (f.total_guardados * 2)))
+             + GREATEST(
+                 0,
+                 3 - DATEDIFF(CURRENT_DATE, DATE(COALESCE(f.published_at, f.created_at))) / 14
+               )
+             - CASE WHEN EXISTS (
+                 SELECT 1 FROM historial_visualizacion h
+                 WHERE h.usuario_id = ? AND h.publicacion_id = f.publicacion_pk
+               ) THEN 1 ELSE 0 END
+           ) AS puntuacion
+         FROM vista_feed_publicaciones f
+         ORDER BY puntuacion + (RAND() * 2) DESC, puntuacion DESC`,
+        [usuarioId, usuarioId, usuarioId, usuarioId, usuarioId, usuarioId]
+      );
+
+    res.json(rows.map(mapFeedPin));
+  } catch (err) {
+    console.error('Error al consultar el feed Para ti:', err);
+    res.status(500).json({ error: 'Error al consultar el feed Para ti' });
+  }
+});
 
 const resolverPublicacionId = async (id) => {
   const texto = String(id ?? '').trim();
@@ -406,6 +704,12 @@ const guardarRecursoDataUrl = async (dataUrl, nombreOriginal) => {
 
 const borrarArchivosSubidos = (rutas) =>
   rutas.forEach((r) => fs.promises.unlink(path.join(__dirname, r)).catch(() => {}));
+
+const rutaArchivoPublicacion = (url) => {
+  const coincidencia = /^\/uploads\/(publicaciones|recursos)\/([^/\\]+)$/.exec(String(url || ''));
+  if (!coincidencia || coincidencia[2] === '.' || coincidencia[2] === '..') return null;
+  return path.join(UPLOADS_DIR, coincidencia[1], coincidencia[2]);
+};
 
 const parseJson = (v) => {
   if (v == null) return null;
@@ -792,6 +1096,62 @@ app.get('/api/publicaciones/:id', async (req, res) => {
   } catch (err) {
     console.error('Error al consultar el detalle de la publicación:', err);
     res.status(500).json({ error: 'Error al consultar la publicación' });
+  }
+});
+
+app.delete('/api/publicaciones/:id', async (req, res) => {
+  const idParam = String(req.params.id ?? '').trim();
+  const usuarioId = parseUsuarioId(req.body?.usuario_id);
+  if (!idParam || !usuarioId) {
+    return res.status(400).json({ error: 'ID de publicación o usuario inválido' });
+  }
+
+  try {
+    const consultaId = /^\d+$/.test(idParam)
+      ? ['SELECT id FROM publicaciones WHERE id = ?', idParam]
+      : ['SELECT id FROM publicaciones WHERE codigo_externo = ?', idParam];
+    const [[publicacion]] = await dbp.query(consultaId[0], [consultaId[1]]);
+    if (!publicacion) {
+      return res.status(404).json({ error: 'Publicación no encontrada' });
+    }
+
+    const [medios] = await dbp.query(
+      'SELECT url_archivo FROM medios_publicacion WHERE publicacion_id = ?',
+      [publicacion.id]
+    );
+    const [recursos] = await dbp.query(
+      'SELECT url_archivo FROM recursos WHERE publicacion_id = ?',
+      [publicacion.id]
+    );
+
+    await dbp.query('CALL sp_eliminar_publicacion(?, ?)', [publicacion.id, usuarioId]);
+
+    const rutas = [...medios, ...recursos]
+      .map((archivo) => rutaArchivoPublicacion(archivo.url_archivo))
+      .filter(Boolean);
+    const resultados = await Promise.allSettled(rutas.map((ruta) => fs.promises.unlink(ruta)));
+    const erroresLimpieza = resultados.filter(
+      (resultado) => resultado.status === 'rejected' && resultado.reason?.code !== 'ENOENT'
+    );
+    if (erroresLimpieza.length > 0) {
+      console.error(`No se pudieron eliminar ${erroresLimpieza.length} archivo(s) de la publicación ${publicacion.id}`);
+    }
+
+    res.json({
+      message: 'Publicación eliminada',
+      archivosPendientes: erroresLimpieza.length,
+    });
+  } catch (err) {
+    const mensaje = String(err.sqlMessage || err.message || '');
+    if (mensaje.includes('PUBLICACION_NO_AUTORIZADA')) {
+      return res.status(403).json({ error: 'Solo el autor puede eliminar esta publicación' });
+    }
+    if (mensaje.includes('PUBLICACION_NO_ENCONTRADA')) {
+      return res.status(404).json({ error: 'Publicación no encontrada' });
+    }
+
+    console.error('Error al eliminar publicación:', err);
+    res.status(500).json({ error: 'Error al eliminar la publicación' });
   }
 });
 

@@ -249,6 +249,17 @@ CREATE TABLE seguimientos (
     FOREIGN KEY (seguido_id) REFERENCES usuarios (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE preferencias_usuario (
+  usuario_id BIGINT UNSIGNED NOT NULL,
+  tipo ENUM('categoria', 'etiqueta') NOT NULL,
+  valor VARCHAR(50) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (usuario_id, tipo, valor),
+  KEY idx_preferencias_usuario_tipo_valor (tipo, valor),
+  CONSTRAINT fk_preferencias_usuario
+    FOREIGN KEY (usuario_id) REFERENCES usuarios (id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE comentarios (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   publicacion_id BIGINT UNSIGNED NOT NULL,
@@ -283,7 +294,7 @@ CREATE TABLE historial_visualizacion (
 -- Feed: una fila por publicacion publicada; orden y paginacion van en el SELECT consumidor.
 -- publicacion_pk es el id numérico: sirve para ordenar de forma estable
 -- (publicacion_id mezcla códigos externos como "p4" con ids numéricos).
-CREATE VIEW vista_feed_publicaciones AS
+CREATE OR REPLACE VIEW vista_feed_publicaciones AS
 SELECT
   COALESCE(p.codigo_externo, CAST(p.id AS CHAR)) AS publicacion_id,
   p.id AS publicacion_pk,
@@ -296,6 +307,10 @@ SELECT
   u.handle AS artista_handle,
   u.avatar_url AS artista_avatar,
   portada.url_archivo AS img_url,
+  (SELECT GROUP_CONCAT(e.nombre ORDER BY e.nombre SEPARATOR ',')
+   FROM publicacion_etiqueta pe
+   JOIN etiquetas e ON e.id = pe.etiqueta_id
+   WHERE pe.publicacion_id = p.id) AS etiquetas,
   (SELECT COUNT(*)
    FROM me_gusta mg
    WHERE mg.publicacion_id = p.id) AS total_me_gusta,
@@ -308,6 +323,36 @@ JOIN usuarios u ON u.id = p.usuario_id
 LEFT JOIN medios_publicacion portada
   ON portada.publicacion_id = p.id AND portada.orden = 0
 WHERE p.estado = 'publicada';
+
+CREATE OR REPLACE VIEW vista_seguidores_usuario AS
+SELECT
+  s.seguido_id AS usuario_id,
+  u.id AS artista_id,
+  u.nombre,
+  u.handle,
+  u.avatar_url AS avatar,
+  u.bio,
+  u.header_bg,
+  (SELECT COUNT(*) FROM seguimientos sx WHERE sx.seguido_id = u.id) AS seguidores,
+  (SELECT COUNT(*) FROM seguimientos sx WHERE sx.seguidor_id = u.id) AS siguiendo,
+  (SELECT COUNT(*) FROM publicaciones p WHERE p.usuario_id = u.id AND p.estado = 'publicada') AS publicaciones
+FROM seguimientos s
+JOIN usuarios u ON u.id = s.seguidor_id;
+
+CREATE OR REPLACE VIEW vista_seguidos_usuario AS
+SELECT
+  s.seguidor_id AS usuario_id,
+  u.id AS artista_id,
+  u.nombre,
+  u.handle,
+  u.avatar_url AS avatar,
+  u.bio,
+  u.header_bg,
+  (SELECT COUNT(*) FROM seguimientos sx WHERE sx.seguido_id = u.id) AS seguidores,
+  (SELECT COUNT(*) FROM seguimientos sx WHERE sx.seguidor_id = u.id) AS siguiendo,
+  (SELECT COUNT(*) FROM publicaciones p WHERE p.usuario_id = u.id AND p.estado = 'publicada') AS publicaciones
+FROM seguimientos s
+JOIN usuarios u ON u.id = s.seguido_id;
 
 -- Detalle: una fila por publicacion. Colecciones hijas se consultan por separado.
 CREATE VIEW vista_detalle_publicacion AS
@@ -580,6 +625,48 @@ END$$
 
 DELIMITER ;
 
+-- Elimina una publicación y todos sus registros relacionados.
+-- Solo el autor puede ejecutar la eliminación.
+DROP PROCEDURE IF EXISTS sp_eliminar_publicacion;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_eliminar_publicacion(
+  IN p_publicacion_id BIGINT UNSIGNED,
+  IN p_usuario_id BIGINT UNSIGNED
+)
+BEGIN
+  DECLARE v_autor_id BIGINT UNSIGNED DEFAULT NULL;
+
+  DECLARE EXIT HANDLER FOR SQLEXCEPTION
+  BEGIN
+    ROLLBACK;
+    RESIGNAL;
+  END;
+
+  START TRANSACTION;
+
+  SELECT usuario_id
+  INTO v_autor_id
+  FROM publicaciones
+  WHERE id = p_publicacion_id
+  FOR UPDATE;
+
+  IF v_autor_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'PUBLICACION_NO_ENCONTRADA';
+  END IF;
+
+  IF v_autor_id <> p_usuario_id THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'PUBLICACION_NO_AUTORIZADA';
+  END IF;
+
+  DELETE FROM publicaciones WHERE id = p_publicacion_id;
+
+  COMMIT;
+END$$
+
+DELIMITER ;
+
 
 -- ==========================================
 -- PRUEBAS RÁPIDAS (opcional)
@@ -631,4 +718,3 @@ SELECT * FROM me_gusta;
 SELECT * FROM seguimientos;
 SELECT * FROM comentarios;
 SELECT * FROM historial_visualizacion;
-

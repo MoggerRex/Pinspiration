@@ -32,15 +32,28 @@ export default function App() {
 
   const [view, setView] = useState<View>("feed");
   const [search, setSearch] = useState("");
+  const [feedMode, setFeedMode] = useState<"Siguiendo" | "Para ti">(() => {
+    const saved = localStorage.getItem("opcionFeed");
+    return saved === "Siguiendo" ? "Siguiendo" : "Para ti";
+  });
   const [activeType, setActiveType] = useState<PinType | "Todos">("Todos");
   const [profileId, setProfileId] = useState<string | null>(null);
-  const [savePin, setSavePin] = useState<Pin | null>(null);
+  const [savePins, setSavePins] = useState<Pin[] | null>(null);
+  const [deletionConfirmation, setDeletionConfirmation] = useState<{
+    count: number;
+    resolve: (accepted: boolean) => void;
+  } | null>(null);
   const [savedNotif, setSavedNotif] = useState<string | null>(null);
+  const [savedPublicationIds, setSavedPublicationIds] = useState<Set<string>>(new Set());
+  const [savedPublicationCounts, setSavedPublicationCounts] = useState<Record<string, number>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [history, setHistory] = useState<Pin[]>([]);
   // Publicaciones publicadas en MySQL (todas, cargadas desde vista_feed_publicaciones)
   const [feedPins, setFeedPins] = useState<Pin[]>([]);
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [feedError, setFeedError] = useState<string | null>(null);
   const [artists, setArtists] = useState<Artist[]>(ARTISTS);
+  const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
 
   // ─── Control de Pila de Navegación de Publicaciones ───
   const [pinStack, setPinStack] = useState<Pin[]>([]);
@@ -68,16 +81,14 @@ export default function App() {
     return map;
   }, [artists]);
 
-  // Feed: primero las publicaciones de la BD (ya vienen de la más nueva a la más vieja)
-  // y después los pines de ejemplo. Si un pin de ejemplo ya existe en MySQL (mismo id),
-  // no se duplica.
+  // Los perfiles y detalles aún pueden referenciar pines estáticos; los feeds usan solo la API.
   const allPins = useMemo(() => {
     const idsBd = new Set(feedPins.map((p) => p.id));
     return [...feedPins, ...PINS.filter((p) => !idsBd.has(p.id))];
   }, [feedPins]);
 
   const filteredPins = useMemo(() => {
-    let pins = allPins;
+    let pins = feedPins;
     if (activeType !== "Todos") pins = pins.filter((p) => p.type === activeType);
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -93,7 +104,7 @@ export default function App() {
       });
     }
     return pins;
-  }, [activeType, search, allPins, artistMap]);
+  }, [activeType, search, feedPins, artistMap]);
 
   // Cargar lista de artistas desde MySQL
   useEffect(() => {
@@ -120,7 +131,7 @@ export default function App() {
 
   // ─── Bloqueo del scroll en el fondo al abrir la modal de Guardar ───
   useEffect(() => {
-    if (savePin) {
+    if (savePins || deletionConfirmation) {
       document.documentElement.style.overflow = "hidden";
       document.body.style.overflow = "hidden";
     } else {
@@ -132,7 +143,7 @@ export default function App() {
       document.documentElement.style.overflow = "";
       document.body.style.overflow = "";
     };
-  }, [savePin]);
+  }, [savePins, deletionConfirmation]);
 
   // Cargar tableros e historial cuando cambia el usuario activo
   useEffect(() => {
@@ -185,8 +196,7 @@ export default function App() {
     }
   }, [user?.id]);
 
-  // ─── Perfil: datos del usuario + publicaciones desde MySQL (vista_perfil_usuario) ───
-  // Aplica los datos del servidor al usuario activo y a la lista de artistas
+  // Aplica los datos del perfil del servidor al usuario activo y a la lista de artistas.
   function aplicarUsuarioApi(u: any, esPropio: boolean) {
     const avatar = fullUrl(u.avatar);
     if (esPropio) {
@@ -203,16 +213,34 @@ export default function App() {
 
   // ─── Feed: todas las publicaciones publicadas, de la más nueva a la más vieja ───
   // El orden lo aplica el backend (ORDER BY ... DESC) sobre vista_feed_publicaciones.
-  function cargarFeed() {
-    fetch(`${API}/api/feed`)
+  function cargarFeed(
+    mode: "Siguiendo" | "Para ti",
+    userId: string | number,
+    signal?: AbortSignal
+  ) {
+    const endpoint = mode === "Siguiendo"
+      ? `/api/feed/siguiendo/${encodeURIComponent(String(userId))}`
+      : `/api/feed/para-ti/${encodeURIComponent(String(userId))}`;
+    setFeedLoading(true);
+    setFeedError(null);
+    fetch(`${API}${endpoint}`, { signal })
       .then((res) => {
         if (!res.ok) throw new Error(`Error HTTP ${res.status} al cargar el feed`);
         return res.json();
       })
       .then((data) => {
-        if (Array.isArray(data)) setFeedPins(data.map(normalizarPinApi));
+        if (!Array.isArray(data)) throw new Error("La respuesta del feed no es válida");
+        setFeedPins(data.map(normalizarPinApi));
       })
-      .catch((err) => console.error("Error al cargar el feed:", err));
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        console.error("Error al cargar el feed:", err);
+        setFeedPins([]);
+        setFeedError(err instanceof Error ? err.message : "Error al cargar el feed");
+      })
+      .finally(() => {
+        if (!signal?.aborted) setFeedLoading(false);
+      });
   }
 
   function cargarPerfil(id: string | number) {
@@ -223,18 +251,51 @@ export default function App() {
         return res.json();
       })
       .then(({ usuario }) => {
-        // Las publicaciones ya vienen en el feed; aquí solo se actualizan los datos del artista
+        // Las publicaciones del perfil se consultan aparte para no depender del feed activo.
         aplicarUsuarioApi(usuario, esPropio);
       })
       .catch((err) => console.error("Error al cargar perfil:", err));
   }
 
-  // Al iniciar sesión: cargar el feed completo y el perfil propio (personalización persistente)
+  // Al iniciar sesión: cargar los datos del perfil propio.
   useEffect(() => {
     if (user?.id) {
-      cargarFeed();
       cargarPerfil(user.id);
     }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const controller = new AbortController();
+    cargarFeed(feedMode, user.id, controller.signal);
+    return () => controller.abort();
+  }, [user?.id, feedMode]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setFollowedArtistIds(new Set());
+      return;
+    }
+
+    setFollowedArtistIds(new Set());
+    const controller = new AbortController();
+    fetch(`${API}/api/usuarios/${encodeURIComponent(String(user.id))}/seguidos`, {
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudieron cargar los artistas seguidos");
+        return data;
+      })
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setFollowedArtistIds(new Set(data.map((artist: any) => String(artist.artista_id))));
+        }
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") console.error("Error al cargar artistas seguidos:", err);
+      });
+    return () => controller.abort();
   }, [user?.id]);
 
   // Al abrir el perfil de un artista: cargar sus publicaciones
@@ -307,44 +368,215 @@ export default function App() {
       .catch((err) => console.error("Error creando tablero:", err));
   }
 
-  function handleSaveToBoard(boardId: string) {
-    if (!savePin || !user?.id) return;
+  async function handleSaveToBoard(boardId: string) {
+    if (!savePins?.length || !user?.id) return;
 
-    fetch(`${API}/api/tableros/guardar`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tablero_id: boardId,
-        usuario_id: user.id,
-        publicacion_id: savePin.id,
-        pin: savePin,
-      }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Error HTTP ${res.status} al guardar el pin`);
+    try {
+      for (const pinToSave of savePins) {
+        const response = await fetch(`${API}/api/tableros/guardar`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tablero_id: boardId,
+            usuario_id: user.id,
+            publicacion_id: pinToSave.id,
+            pin: pinToSave,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `Error HTTP ${response.status}`);
+
+        let savesCount = Number(data.savesCount);
+        if (!Number.isFinite(savesCount)) {
+          const interactionsResponse = await fetch(
+            `${API}/api/publicaciones/${encodeURIComponent(pinToSave.id)}/interacciones?usuario_id=${encodeURIComponent(String(user.id))}`
+          );
+          const interactions = await interactionsResponse.json();
+          if (!interactionsResponse.ok) {
+            throw new Error(interactions.error || "Se guardó el pin, pero no se pudo actualizar su contador");
+          }
+          savesCount = Number(interactions.savesCount) || 0;
+        }
+
+        setSavedPublicationIds((prev) => new Set(prev).add(pinToSave.id));
+        setSavedPublicationCounts((prev) => ({ ...prev, [pinToSave.id]: savesCount }));
         setBoards((prev) =>
-          prev.map((b) =>
-            b.id === boardId
+          prev.map((board) =>
+            board.id === boardId
               ? {
-                  ...b,
-                  pins: b.pins.find((p) => p.id === savePin.id)
-                    ? b.pins
-                    : [...b.pins, savePin],
+                  ...board,
+                  pins: board.pins.some((pin) => pin.id === pinToSave.id)
+                    ? board.pins
+                    : [...board.pins, pinToSave],
                 }
-              : b
+              : board
           )
         );
-        const boardName = boards.find((b) => b.id === boardId)?.name;
-        setSavePin(null);
-        setSavedNotif(`Guardado en "${boardName}"`);
-        setTimeout(() => setSavedNotif(null), 2500);
-      })
-      .catch((err) => console.error("Error guardando en tablero:", err));
+      }
+
+      const boardName = boards.find((board) => board.id === boardId)?.name;
+      cargarFeed(feedMode, user.id);
+      setSavePins(null);
+      setSavedNotif(
+        savePins.length === 1
+          ? `Guardado en "${boardName}"`
+          : `${savePins.length} publicaciones guardadas en "${boardName}"`
+      );
+      setTimeout(() => setSavedNotif(null), 2500);
+    } catch (err) {
+      console.error("Error guardando en tablero:", err);
+      setSavedNotif(err instanceof Error ? err.message : "No se pudo guardar el pin");
+      setTimeout(() => setSavedNotif(null), 3000);
+    }
   }
 
   function handleArtist(id: string) {
     setProfileId(id);
     setView("profile");
+  }
+
+  function confirmarEliminacion(count: number): Promise<boolean> {
+    return new Promise((resolve) => setDeletionConfirmation({ count, resolve }));
+  }
+
+  function responderConfirmacionEliminacion(accepted: boolean) {
+    if (!deletionConfirmation) return;
+    deletionConfirmation.resolve(accepted);
+    setDeletionConfirmation(null);
+  }
+
+  async function handleDeletePublication(pin: Pin): Promise<boolean> {
+    if (!user?.id || String(pin.artistId) !== String(user.id)) return false;
+    if (!(await confirmarEliminacion(1))) return false;
+
+    try {
+      const response = await fetch(`${API}/api/publicaciones/${encodeURIComponent(pin.id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario_id: user.id }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo eliminar la publicación");
+
+      setFeedPins((prev) => prev.filter((publication) => publication.id !== pin.id));
+      setHistory((prev) => prev.filter((publication) => publication.id !== pin.id));
+      setBoards((prev) => prev.map((board) => ({
+        ...board,
+        pins: board.pins.filter((publication) => publication.id !== pin.id),
+      })));
+
+      const remainingPinStack = pinStack.filter((publication) => publication.id !== pin.id);
+      setPinStack(remainingPinStack);
+      if (remainingPinStack.length === 0) setView(prevView);
+
+      if (user?.id) {
+        cargarFeed(feedMode, user.id);
+        cargarPerfil(user.id);
+      }
+      setSavedNotif(
+        data.archivosPendientes > 0
+          ? "Publicación eliminada; algunos archivos no se pudieron limpiar"
+          : "Publicación eliminada"
+      );
+      setTimeout(() => setSavedNotif(null), 3000);
+      return true;
+    } catch (err) {
+      console.error("Error al eliminar publicación:", err);
+      setSavedNotif(err instanceof Error ? err.message : "No se pudo eliminar la publicación");
+      setTimeout(() => setSavedNotif(null), 3000);
+      return false;
+    }
+  }
+
+  async function handleDeleteSelectedPublications(pins: Pin[]): Promise<string[]> {
+    if (!user?.id || pins.length === 0) return [];
+    if (!(await confirmarEliminacion(pins.length))) return [];
+
+    const results = await Promise.allSettled(
+      pins.map(async (pin) => {
+        if (String(pin.artistId) !== String(user.id)) {
+          throw new Error(`No eres autor de "${pin.title}"`);
+        }
+        const response = await fetch(`${API}/api/publicaciones/${encodeURIComponent(pin.id)}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ usuario_id: user.id }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `No se pudo eliminar "${pin.title}"`);
+        return { id: pin.id, archivosPendientes: Number(data.archivosPendientes) || 0 };
+      })
+    );
+
+    const eliminadas = results.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : []
+    );
+    const deletedIds = eliminadas.map((publication) => publication.id);
+    if (deletedIds.length > 0) {
+      const deleted = new Set(deletedIds);
+      setFeedPins((prev) => prev.filter((pin) => !deleted.has(pin.id)));
+      setHistory((prev) => prev.filter((pin) => !deleted.has(pin.id)));
+      setBoards((prev) => prev.map((board) => ({
+        ...board,
+        pins: board.pins.filter((pin) => !deleted.has(pin.id)),
+      })));
+    }
+
+    const failed = results.filter((result) => result.status === "rejected").length;
+    const pendingFiles = eliminadas.reduce((total, publication) => total + publication.archivosPendientes, 0);
+    if (failed || pendingFiles) {
+      const message = failed
+        ? `${deletedIds.length} eliminada(s); ${failed} no se pudieron eliminar`
+        : "Publicaciones eliminadas; algunos archivos no se pudieron limpiar";
+      setSavedNotif(message);
+      if (failed) {
+        results.forEach((result) => {
+          if (result.status === "rejected") console.error("Error al eliminar publicación seleccionada:", result.reason);
+        });
+      }
+    } else {
+      setSavedNotif(`${deletedIds.length} publicación${deletedIds.length === 1 ? "" : "es"} eliminada${deletedIds.length === 1 ? "" : "s"}`);
+    }
+    setTimeout(() => setSavedNotif(null), 3000);
+    return deletedIds;
+  }
+
+  async function handleToggleFollow(artistId: string, following: boolean) {
+    if (!user?.id || !/^\d+$/.test(String(artistId))) return;
+    try {
+      const response = await fetch(
+        `${API}/api/seguimientos/${encodeURIComponent(String(user.id))}/${encodeURIComponent(artistId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ following }),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo actualizar el seguimiento");
+
+      setFollowedArtistIds((prev) => {
+        const next = new Set(prev);
+        if (data.following) next.add(artistId);
+        else next.delete(artistId);
+        return next;
+      });
+      setArtists((prev) => prev.map((artist) => (
+        String(artist.id) === artistId
+          ? { ...artist, followers: Number(data.followersCount) || 0 }
+          : artist
+      )));
+      setUser((prev: any) => prev ? {
+        ...prev,
+        following: Number(data.followingCount) || 0,
+        siguiendo: Number(data.followingCount) || 0,
+      } : prev);
+      if (feedMode === "Para ti") cargarFeed(feedMode, user.id);
+    } catch (err) {
+      console.error("Error al actualizar seguimiento:", err);
+      setSavedNotif(err instanceof Error ? err.message : "No se pudo actualizar el seguimiento");
+      setTimeout(() => setSavedNotif(null), 2500);
+    }
   }
 
   const handleUpdateUser = (updatedData: any) => {
@@ -392,6 +624,11 @@ export default function App() {
         }}
         activeType={activeType}
         onType={setActiveType}
+        feedMode={feedMode}
+        onFeedMode={(mode) => {
+          setFeedMode(mode);
+          localStorage.setItem("opcionFeed", mode);
+        }}
         onHamburger={() => setDrawerOpen(true)}
       />
 
@@ -443,11 +680,66 @@ export default function App() {
         </div>
       )}
 
-      {savePin && (
+      {deletionConfirmation && (
+        <div
+          className="modal-backdrop"
+          onClick={() => responderConfirmacionEliminacion(false)}
+        >
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-confirmation-title"
+            aria-describedby="delete-confirmation-description"
+            className="modal-box"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 420,
+              maxWidth: "92vw",
+              padding: 28,
+              color: "#e8eef2",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.55)",
+            }}
+          >
+            <h2
+              id="delete-confirmation-title"
+              style={{ margin: "0 0 12px", fontSize: 20, fontWeight: 700, fontFamily: "'Playfair Display', serif" }}
+            >
+              Confirmar eliminación
+            </h2>
+            <p
+              id="delete-confirmation-description"
+              style={{ margin: "0 0 24px", color: "#b0c8d8", fontSize: 14, lineHeight: 1.6 }}
+            >
+              ¿Seguro que quieres eliminar {deletionConfirmation.count} publicación
+              {deletionConfirmation.count === 1 ? "" : "es"}? Esta acción no se puede deshacer
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => responderConfirmacionEliminacion(false)}
+                className="cat-pill"
+                style={{ padding: "10px 18px", cursor: "pointer" }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => responderConfirmacionEliminacion(true)}
+                className="cat-pill delete-confirm-accept"
+                style={{ padding: "10px 18px" }}
+              >
+                Aceptar
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {savePins && (
         <ModalGuardarPin
-          pin={savePin}
+          pins={savePins}
           boards={boards}
-          onClose={() => setSavePin(null)}
+          onClose={() => setSavePins(null)}
           onSaveToBoard={handleSaveToBoard}
           onCreateBoard={handleCreateBoard}
         />
@@ -457,8 +749,11 @@ export default function App() {
         <Home
           pins={filteredPins}
           search={search}
+          feedMode={feedMode}
+          loading={feedLoading}
+          error={feedError}
           artistMap={artistMap}
-          onSave={(p) => setSavePin(p)}
+          onSave={(p) => setSavePins([p])}
           onArtist={handleArtist}
           onPinClick={openPin}
         />
@@ -470,13 +765,17 @@ export default function App() {
           allPins={allPins}
           currentUser={user}
           artists={artists}
+          isFollowing={profileId ? followedArtistIds.has(String(profileId)) : false}
+          onToggleFollow={handleToggleFollow}
           onUpdateUser={handleUpdateUser}
           onBack={() => {
             setView("feed");
             setProfileId(null);
           }}
-          onSave={(p) => setSavePin(p)}
+          onSave={(p) => setSavePins([p])}
           onPinClick={openPin}
+          onDeleteSelectedPublications={handleDeleteSelectedPublications}
+          onSaveSelectedPublications={(pins) => setSavePins(pins)}
           onSelectArtist={(id) => setProfileId(id)}
         />
       )}
@@ -487,10 +786,27 @@ export default function App() {
           allPins={allPins}
           artistMap={artistMap}
           currentUser={user}
+          isFollowing={followedArtistIds.has(String(activePin.artistId))}
+          onToggleFollow={handleToggleFollow}
+          onFeedSignal={() => {
+            if (user?.id) cargarFeed(feedMode, user.id);
+          }}
+          isSavedInBoard={savedPublicationIds.has(activePin.id)}
+          savedCount={savedPublicationCounts[activePin.id]}
+          onDeletePublication={handleDeletePublication}
           onBack={handleBackFromPin}
           onArtist={handleArtist}
-          onSave={(p) => setSavePin(p)}
-          onSavedChange={(pin, saved, boardId) => {
+          onSave={(p) => setSavePins([p])}
+          onSavedChange={(pin, saved, boardId, savesCount) => {
+            setSavedPublicationIds((prev) => {
+              const next = new Set(prev);
+              if (saved) next.add(pin.id);
+              else next.delete(pin.id);
+              return next;
+            });
+            if (typeof savesCount === "number") {
+              setSavedPublicationCounts((prev) => ({ ...prev, [pin.id]: savesCount }));
+            }
             setBoards((prev) => {
               if (!saved) {
                 return prev.map((board) => ({
@@ -533,7 +849,7 @@ export default function App() {
           artistMap={artistMap}
           onBack={() => setView("feed")}
           onPinClick={openPin}
-          onSave={(p) => setSavePin(p)}
+          onSave={(p) => setSavePins([p])}
         />
       )}
 
@@ -548,7 +864,7 @@ export default function App() {
       {view === "historial" && (
         <Historial
           history={history}
-          onSave={(p) => setSavePin(p)}
+          onSave={(p) => setSavePins([p])}
           onPinClick={openPin}
           onBack={() => setView("feed")}
         />

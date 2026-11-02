@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Artist, Pin } from "../tipos";
 import { ARTISTS } from "../datos";
 import { formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
-import { ArrowLeft, UserRoundPlus, Pencil, X, Upload } from "lucide-react";
+import { ArrowLeft, Bookmark, UserRoundPlus, Pencil, X, Trash2, Upload } from "lucide-react";
 import { HexColorPicker } from "react-colorful";
+import { API, fullUrl } from "../api";
 
 interface PerfilProps {
   profileId: string | null;
@@ -15,7 +16,11 @@ interface PerfilProps {
   onBack: () => void;
   onSave: (pin: Pin) => void;
   onPinClick: (pin: Pin) => void;
+  onDeleteSelectedPublications: (pins: Pin[]) => Promise<string[]>;
+  onSaveSelectedPublications: (pins: Pin[]) => void;
   onSelectArtist: (id: string) => void;
+  isFollowing: boolean;
+  onToggleFollow: (artistId: string, following: boolean) => void;
 }
 
 export function Perfil({
@@ -27,7 +32,11 @@ export function Perfil({
   onBack,
   onSave,
   onPinClick,
+  onDeleteSelectedPublications,
+  onSaveSelectedPublications,
   onSelectArtist,
+  isFollowing,
+  onToggleFollow,
 }: PerfilProps) {
   // Estado para la ventana flotante de Edición
   const [isEditing, setIsEditing] = useState(false);
@@ -39,6 +48,106 @@ export function Perfil({
   // Modo de selección de color: "presets" o "picker"
   const [colorSelectionMode, setColorSelectionMode] = useState<"presets" | "picker">("presets");
   const [customColor, setCustomColor] = useState("#00385a");
+  const [followListType, setFollowListType] = useState<"seguidores" | "seguidos" | null>(null);
+  const [followUsers, setFollowUsers] = useState<Artist[]>([]);
+  const [followListLoading, setFollowListLoading] = useState(false);
+  const [followListError, setFollowListError] = useState("");
+  const [profilePins, setProfilePins] = useState<Pin[]>([]);
+  const [profilePinsLoading, setProfilePinsLoading] = useState(false);
+  const [profilePinsError, setProfilePinsError] = useState("");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedPublicationIds, setSelectedPublicationIds] = useState<Set<string>>(new Set());
+  const [deletingSelected, setDeletingSelected] = useState(false);
+  const [returnToFollowList, setReturnToFollowList] = useState<{
+    profileId: string;
+    type: "seguidores" | "seguidos";
+  } | null>(null);
+
+  useEffect(() => {
+    if (!followListType || !profileId) return;
+
+    let active = true;
+    setFollowListLoading(true);
+    setFollowListError("");
+    fetch(`${API}/api/usuarios/${encodeURIComponent(String(profileId))}/${followListType}`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudo cargar la lista");
+        return data;
+      })
+      .then((data) => {
+        if (!active) return;
+        setFollowUsers(data.map((user: any) => ({
+          id: String(user.artista_id),
+          name: user.nombre,
+          handle: String(user.handle || "").replace(/^@/, ""),
+          avatar: fullUrl(user.avatar),
+          bio: user.bio || "",
+          followers: Number(user.seguidores) || 0,
+          following: Number(user.siguiendo) || 0,
+          publications: Number(user.publicaciones) || 0,
+          headerBg: user.header_bg,
+        })));
+      })
+      .catch((err) => {
+        console.error("Error al cargar la lista de seguimiento:", err);
+        if (active) setFollowListError(err instanceof Error ? err.message : "No se pudo cargar la lista");
+      })
+      .finally(() => {
+        if (active) setFollowListLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [followListType, profileId]);
+
+  useEffect(() => {
+    if (!profileId || !/^\d+$/.test(String(profileId))) {
+      setProfilePins([]);
+      setProfilePinsLoading(false);
+      setProfilePinsError("");
+      return;
+    }
+
+    let active = true;
+    setProfilePinsLoading(true);
+    setProfilePinsError("");
+    fetch(`${API}/api/perfil/${encodeURIComponent(String(profileId))}`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudieron cargar las publicaciones");
+        return data;
+      })
+      .then((data) => {
+        if (!active) return;
+        const publicaciones = Array.isArray(data.publicaciones) ? data.publicaciones : [];
+        setProfilePins(publicaciones.map((pin: Pin) => ({
+          ...pin,
+          imgUrl: fullUrl(pin.imgUrl),
+          media: pin.media?.map(fullUrl),
+        })));
+      })
+      .catch((err) => {
+        console.error("Error al cargar las publicaciones del perfil:", err);
+        if (active) {
+          setProfilePins([]);
+          setProfilePinsError(err instanceof Error ? err.message : "No se pudieron cargar las publicaciones");
+        }
+      })
+      .finally(() => {
+        if (active) setProfilePinsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [profileId]);
+
+  useEffect(() => {
+    setSelectionMode(false);
+    setSelectedPublicationIds(new Set());
+  }, [profileId]);
 
   const isOwnProfile = profileId === currentUser?.id || String(profileId) === String(currentUser?.id) || profileId === "me";
 
@@ -80,8 +189,43 @@ export function Perfil({
       }
     : artists.find((a) => String(a.id) === String(profileId)) || artists[0];
 
-  const pins = allPins.filter((p) => String(p.artistId) === String(isOwnProfile ? currentUser.id : profileId));
+  const pins = /^\d+$/.test(String(profileId))
+    ? profilePins
+    : allPins.filter((p) => String(p.artistId) === String(isOwnProfile ? currentUser.id : profileId));
   const artistMap = Object.fromEntries(artists.map((a) => [a.id, a]));
+  const selectedPublications = pins.filter((pin) => selectedPublicationIds.has(pin.id));
+
+  const togglePublicationSelection = (pin: Pin) => {
+    setSelectedPublicationIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(pin.id)) next.delete(pin.id);
+      else next.add(pin.id);
+      return next;
+    });
+  };
+
+  const cancelSelection = () => {
+    setSelectionMode(false);
+    setSelectedPublicationIds(new Set());
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedPublications.length === 0 || deletingSelected) return;
+    setDeletingSelected(true);
+    try {
+      const deletedIds = await onDeleteSelectedPublications(selectedPublications);
+      if (deletedIds.length > 0) {
+        setProfilePins((previous) => previous.filter((pin) => !deletedIds.includes(pin.id)));
+        setSelectedPublicationIds((previous) => {
+          const next = new Set(previous);
+          deletedIds.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    } finally {
+      setDeletingSelected(false);
+    }
+  };
 
   const handleOpenEdit = () => {
     setEditName(artist.name);
@@ -144,6 +288,106 @@ export function Perfil({
     headerBgValue.toLowerCase() === "#fff" ||
     headerBgValue.toLowerCase().includes("#ffffff");
 
+  const openFollowList = (type: "seguidores" | "seguidos") => {
+    setReturnToFollowList(null);
+    setFollowListType(type);
+  };
+
+  const handleProfileBack = () => {
+    if (returnToFollowList) {
+      const previousList = returnToFollowList;
+      setReturnToFollowList(null);
+      onSelectArtist(previousList.profileId);
+      setFollowListType(previousList.type);
+      return;
+    }
+    onBack();
+  };
+
+  if (followListType) {
+    return (
+      <main style={{ minHeight: "100vh", padding: "28px 20px 60px", background: "#13191d", color: "#e8eef2" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto" }}>
+          <button
+            type="button"
+            onClick={() => setFollowListType(null)}
+            className="cat-pill"
+            style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 24 }}
+          >
+            <ArrowLeft size={16} />
+            <span>Volver al perfil</span>
+          </button>
+          <h1 style={{ margin: "0 0 6px", fontFamily: "'Playfair Display', serif", fontSize: 28 }}>
+            {followListType === "seguidores" ? "Seguidores" : "Siguiendo"}
+          </h1>
+          <p style={{ margin: "0 0 24px", color: "#7a909f", fontSize: 14 }}>
+            {followListType === "seguidores"
+              ? `Personas que siguen a ${artist.name}`
+              : `Artistas que sigue ${artist.name}`}
+          </p>
+          {followListLoading ? (
+            <p style={{ color: "#7a909f", padding: "40px 0", textAlign: "center" }}>Cargando…</p>
+          ) : followListError ? (
+            <p role="alert" style={{ color: "#ff8a8a", padding: "40px 0", textAlign: "center" }}>{followListError}</p>
+          ) : followUsers.length === 0 ? (
+            <p style={{ color: "#7a909f", padding: "40px 0", textAlign: "center" }}>
+              {followListType === "seguidores"
+                ? "Aún no tiene seguidores."
+                : "Aún no sigue a ningún artista."}
+            </p>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+              {followUsers.map((followUser) => (
+                <button
+                  key={followUser.id}
+                  type="button"
+                  onClick={() => {
+                    setReturnToFollowList({ profileId: String(profileId), type: followListType });
+                    setFollowListType(null);
+                    onSelectArtist(followUser.id);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: 16,
+                    background: "#1a2228",
+                    border: "1px solid #242f38",
+                    borderRadius: 14,
+                    color: "#e8eef2",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    transition: "border-color 0.15s, transform 0.15s",
+                  }}
+                  onMouseEnter={(event) => {
+                    event.currentTarget.style.borderColor = "#00385a";
+                    event.currentTarget.style.transform = "translateY(-2px)";
+                  }}
+                  onMouseLeave={(event) => {
+                    event.currentTarget.style.borderColor = "#242f38";
+                    event.currentTarget.style.transform = "translateY(0)";
+                  }}
+                >
+                  <img
+                    src={followUser.avatar}
+                    alt=""
+                    style={{ width: 52, height: 52, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
+                  />
+                  <span style={{ minWidth: 0 }}>
+                    <strong style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {followUser.name}
+                    </strong>
+                    <small style={{ display: "block", marginTop: 4, color: "#7a909f" }}>@{followUser.handle}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: "#13191d" }}>
       {/* Cabecera del Perfil estilo Móvil */}
@@ -183,14 +427,22 @@ export function Perfil({
                 <strong style={{ display: "block", color: isWhiteHeader ? "#111111" : "#e8eef2", fontSize: 14 }}>{pins.length}</strong>
                 <span style={{ color: isWhiteHeader ? "#555555" : "#7a909f", fontSize: 11 }}>pines</span>
               </div>
-              <div>
+              <button
+                type="button"
+                onClick={() => openFollowList("seguidores")}
+                style={{ background: "none", border: 0, padding: 0, textAlign: "left", cursor: "pointer", color: "inherit" }}
+              >
                 <strong style={{ display: "block", color: isWhiteHeader ? "#111111" : "#e8eef2", fontSize: 14 }}>{formatNum(artist.followers)}</strong>
                 <span style={{ color: isWhiteHeader ? "#555555" : "#7a909f", fontSize: 11 }}>seguidores</span>
-              </div>
-              <div>
+              </button>
+              <button
+                type="button"
+                onClick={() => openFollowList("seguidos")}
+                style={{ background: "none", border: 0, padding: 0, textAlign: "left", cursor: "pointer", color: "inherit" }}
+              >
                 <strong style={{ display: "block", color: isWhiteHeader ? "#111111" : "#e8eef2", fontSize: 14 }}>{formatNum(artist.following)}</strong>
                 <span style={{ color: isWhiteHeader ? "#555555" : "#7a909f", fontSize: 11 }}>siguiendo</span>
-              </div>
+              </button>
             </div>
           </div>
         </div>
@@ -237,8 +489,9 @@ export function Perfil({
             <Pencil size={15} />
             <span>Editar perfil</span>
           </button>
-        ) : (
+        ) : /^\d+$/.test(String(artist.id)) ? (
           <button
+            onClick={() => onToggleFollow(String(artist.id), !isFollowing)}
             className="cat-pill"
             style={{
               display: "inline-flex",
@@ -250,36 +503,48 @@ export function Perfil({
             }}
           >
             <UserRoundPlus size={16} />
-            <span>Seguir</span>
+            <span>{isFollowing ? "Siguiendo" : "Seguir"}</span>
           </button>
-        )}
+        ) : null}
 
         <div style={{ height: 1, background: "#242f38", marginTop: 16 }} />
       </div>
 
       {/* Grid de Publicaciones */}
-      <div style={{ width: "100%", padding: "16px 20px 60px", boxSizing: "border-box" }}>
+      <div style={{ width: "100%", padding: `16px 20px ${selectionMode ? 116 : 60}px`, boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <h3 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 20, color: "#e8eef2", fontWeight: 600 }}>
             Publicaciones
           </h3>
 
-          <button
-            onClick={onBack}
-            className="cat-pill"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              cursor: "pointer",
-            }}
-          >
-            <ArrowLeft size={16} />
-            <span>Volver</span>
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {isOwnProfile && (
+              <button
+                type="button"
+                onClick={selectionMode ? cancelSelection : () => setSelectionMode(true)}
+                className="cat-pill"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+              >
+                {selectionMode && <X size={16} />}
+                <span>{selectionMode ? "Cancelar" : "Seleccionar"}</span>
+              </button>
+            )}
+            <button
+              onClick={handleProfileBack}
+              className="cat-pill"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+            >
+              <ArrowLeft size={16} />
+              <span>Volver</span>
+            </button>
+          </div>
         </div>
 
-        {pins.length === 0 ? (
+        {profilePinsLoading && /^\d+$/.test(String(profileId)) ? (
+          <p style={{ color: "#7a909f", textAlign: "center", padding: "60px 0" }}>Cargando publicaciones…</p>
+        ) : profilePinsError && /^\d+$/.test(String(profileId)) ? (
+          <p role="alert" style={{ color: "#ff8a8a", textAlign: "center", padding: "60px 0" }}>{profilePinsError}</p>
+        ) : pins.length === 0 ? (
           <p style={{ color: "#7a909f", textAlign: "center", padding: "60px 0" }}>No hay pines aún.</p>
         ) : (
           <div className="masonry-grid">
@@ -291,11 +556,89 @@ export function Perfil({
                 onSave={onSave}
                 onArtist={() => {}}
                 onPinClick={onPinClick}
+                selectionMode={isOwnProfile && selectionMode}
+                selected={selectedPublicationIds.has(pin.id)}
+                onToggleSelection={togglePublicationSelection}
               />
             ))}
           </div>
         )}
       </div>
+
+      {isOwnProfile && selectionMode && (
+        <footer
+          style={{
+            position: "fixed",
+            inset: "auto 0 0",
+            zIndex: 900,
+            display: "grid",
+            gridTemplateColumns: "1fr auto 1fr",
+            alignItems: "center",
+            gap: 12,
+            padding: "14px 20px calc(14px + env(safe-area-inset-bottom))",
+            background: "rgba(26, 34, 40, 0.97)",
+            borderTop: "1px solid #2b3942",
+            boxShadow: "0 -8px 24px rgba(0,0,0,0.28)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Guardar publicaciones seleccionadas"
+            disabled={selectedPublications.length === 0}
+            onClick={() => {
+              onSaveSelectedPublications(selectedPublications);
+              cancelSelection();
+            }}
+            style={{
+              justifySelf: "start",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 44,
+              height: 44,
+              color: "#fff",
+              background: selectedPublications.length ? "#00385a" : "#263139",
+              border: 0,
+              borderRadius: 12,
+              cursor: selectedPublications.length ? "pointer" : "not-allowed",
+              opacity: selectedPublications.length ? 1 : 0.55,
+            }}
+          >
+            <Bookmark size={18} />
+          </button>
+          <span style={{ color: "#b0c8d8", fontSize: 14, fontWeight: 600, textAlign: "center", whiteSpace: "nowrap" }}>
+            Seleccionar publicaciones
+            {selectedPublications.length > 0 && (
+              <small style={{ display: "block", marginTop: 2, color: "#7a909f", fontSize: 11 }}>
+                {selectedPublications.length} seleccionada{selectedPublications.length === 1 ? "" : "s"}
+              </small>
+            )}
+          </span>
+          <button
+            type="button"
+            aria-label="Eliminar publicaciones seleccionadas"
+            disabled={selectedPublications.length === 0 || deletingSelected}
+            onClick={handleDeleteSelected}
+            style={{
+              justifySelf: "end",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 44,
+              height: 44,
+              color: "#fff",
+              background: selectedPublications.length ? "#8b2635" : "#263139",
+              border: 0,
+              borderRadius: 12,
+              cursor: selectedPublications.length && !deletingSelected ? "pointer" : "not-allowed",
+              opacity: selectedPublications.length ? 1 : 0.55,
+            }}
+          >
+            <Trash2 size={18} />
+          </button>
+        </footer>
+      )}
 
       {/* Modal de Edición de Perfil */}
       {isEditing && (

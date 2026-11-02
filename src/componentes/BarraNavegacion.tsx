@@ -12,6 +12,8 @@ interface BarraNavegacionProps {
   onView: (v: View) => void;
   activeType: PinType | "Todos";
   onType: (t: PinType | "Todos") => void;
+  feedMode: "Siguiendo" | "Para ti";
+  onFeedMode: (mode: "Siguiendo" | "Para ti") => void;
   onHamburger: () => void;
 }
 
@@ -22,22 +24,14 @@ export function BarraNavegacion({
   onView,
   activeType,
   onType,
+  feedMode,
+  onFeedMode,
   onHamburger,
 }: BarraNavegacionProps) {
   const [menuAbierto, setMenuAbierto] = useState(false);
 
-  const [opcionFeed, setOpcionFeed] = useState<"Siguiendo" | "Para ti">(
-    () => {
-      const guardado = localStorage.getItem("opcionFeed");
-      return guardado === "Siguiendo" || guardado === "Para ti"
-        ? guardado
-        : "Para ti";
-    }
-  );
-
   const seleccionarOpcionFeed = (opcion: "Siguiendo" | "Para ti") => {
-    setOpcionFeed(opcion);
-    localStorage.setItem("opcionFeed", opcion);
+    onFeedMode(opcion);
     onView("feed");
     setMenuAbierto(false);
   };
@@ -54,7 +48,13 @@ export function BarraNavegacion({
           <Menu size={20} />
         </button>
 
-        <div className="nav-logo nav-item-logo" onClick={() => onView("feed")}>
+        <div
+          className="nav-logo nav-item-logo"
+          onClick={() => {
+            onType("Todos");
+            onView("feed");
+          }}
+        >
           <div className="nav-logo-icon">P</div>
           <span className="nav-logo-text font-display">Pinspiration</span>
         </div>
@@ -90,20 +90,20 @@ export function BarraNavegacion({
             className="boton-nav"
           >
             {menuAbierto ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-            <span>{opcionFeed}</span>
+            <span>{feedMode}</span>
           </button>
 
           {menuAbierto && (
             <div className="feed-dropdown">
               <button
                 onClick={() => seleccionarOpcionFeed("Para ti")}
-                className={`dropdown-item ${opcionFeed === "Para ti" ? "active" : ""}`}
+                className={`dropdown-item ${feedMode === "Para ti" ? "active" : ""}`}
               >
                 Para ti
               </button>
               <button
                 onClick={() => seleccionarOpcionFeed("Siguiendo")}
-                className={`dropdown-item ${opcionFeed === "Siguiendo" ? "active" : ""}`}
+                className={`dropdown-item ${feedMode === "Siguiendo" ? "active" : ""}`}
               >
                 Siguiendo
               </button>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bookmark } from "lucide-react";
+import { Bookmark, Square, SquareCheck, Trash2 } from "lucide-react";
 import type { Pin, Artist } from "../tipos";
 import { tagClass } from "../ayudantes";
 import "./TarjetaPin.css";
@@ -10,9 +10,23 @@ interface TarjetaPinProps {
   onSave: (pin: Pin) => void;
   onArtist: (artistId: string) => void;
   onPinClick: (pin: Pin) => void;
+  onDelete?: (pin: Pin) => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelection?: (pin: Pin) => void;
 }
 
-export function TarjetaPin({ pin, artist, onSave, onArtist, onPinClick }: TarjetaPinProps) {
+export function TarjetaPin({
+  pin,
+  artist,
+  onSave,
+  onArtist,
+  onPinClick,
+  onDelete,
+  selectionMode = false,
+  selected = false,
+  onToggleSelection,
+}: TarjetaPinProps) {
   const imageRef = useRef<HTMLImageElement>(null);
   const [rowSpan, setRowSpan] = useState(1);
 
@@ -34,19 +48,50 @@ export function TarjetaPin({ pin, artist, onSave, onArtist, onPinClick }: Tarjet
 
   return (
     <div className="masonry-item" style={{ gridRowEnd: `span ${rowSpan}` }}>
-      <div className="pin-card" onClick={() => onPinClick(pin)}>
+      <div
+        className={`pin-card${selectionMode ? " pin-card-selecting" : ""}${selectionMode && selected ? " pin-card-selected" : ""}`}
+        onClick={() => selectionMode ? onToggleSelection?.(pin) : onPinClick(pin)}
+      >
         <img ref={imageRef} src={pin.imgUrl} alt={pin.title} style={{ width: "100%", display: "block", borderRadius: "16px" }} loading="lazy" />
         <div className="overlay">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <span className={tagClass(pin.type)}>{pin.type}</span>
-            <button
-              className="save-btn"
-              aria-label="Guardar"
-              onClick={(e) => { e.stopPropagation(); onSave(pin); }}
-            >
-              <span className="save-label">Guardar</span>
-              <Bookmark className="save-icon" size={18} />
-            </button>
+            {selectionMode ? (
+              <button
+                type="button"
+                className="selection-toggle"
+                aria-label={selected ? "Quitar selección" : "Seleccionar publicación"}
+                aria-pressed={selected}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleSelection?.(pin);
+                }}
+              >
+                {selected ? <SquareCheck size={26} fill="#00385a" /> : <Square size={26} />}
+              </button>
+            ) : (
+              <div style={{ display: "flex", gap: 8 }}>
+                {onDelete && (
+                <button
+                  className="delete-btn"
+                  aria-label="Eliminar publicación"
+                  title="Eliminar publicación"
+                  onClick={(e) => { e.stopPropagation(); onDelete(pin); }}
+                >
+                  <span className="save-label">Eliminar</span>
+                  <Trash2 size={16} />
+                </button>
+                )}
+                <button
+                  className="save-btn"
+                  aria-label="Guardar"
+                  onClick={(e) => { e.stopPropagation(); onSave(pin); }}
+                >
+                  <span className="save-label">Guardar</span>
+                  <Bookmark className="save-icon" size={18} />
+                </button>
+              </div>
+            )}
           </div>
           {/* Título y artista: se ocultan en móvil desde el CSS */}
           <div className="pin-info">

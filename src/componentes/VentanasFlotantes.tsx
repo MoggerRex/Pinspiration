@@ -10,27 +10,34 @@ import "./VentanasFlotantes.css";
 // Se eliminó para no dejar código muerto.)
 
 interface ModalGuardarPinProps {
-  pin: Pin;
+  pins: Pin[];
   boards: { id: string; name: string }[];
   onClose: () => void;
   onSaveToBoard: (boardId: string) => void;
   onCreateBoard: (name: string) => void;
 }
 
-export function ModalGuardarPin({ pin, boards, onClose, onSaveToBoard, onCreateBoard }: ModalGuardarPinProps) {
+export function ModalGuardarPin({ pins, boards, onClose, onSaveToBoard, onCreateBoard }: ModalGuardarPinProps) {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const pin = pins[0];
+  if (!pin) return null;
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-box" style={{ width: 360, padding: 28, maxWidth: "92vw" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, fontFamily: "'Playfair Display', serif" }}>Guardar pin</h2>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, fontFamily: "'Playfair Display', serif" }}>
+            {pins.length === 1 ? "Guardar pin" : `Guardar ${pins.length} publicaciones`}
+          </h2>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#7a909f", padding: 4 }}><IconX /></button>
         </div>
         <div style={{ display: "flex", gap: 12, marginBottom: 20, alignItems: "center" }}>
           <img src={pin.imgUrl} alt={pin.title} style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
           <div>
-            <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: "#e8eef2" }}>{pin.title}</p>
+            <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: "#e8eef2" }}>
+              {pins.length === 1 ? pin.title : `${pins.length} publicaciones seleccionadas`}
+            </p>
             <span className={tagClass(pin.type)} style={{ marginTop: 4, display: "inline-block" }}>{pin.type}</span>
           </div>
         </div>

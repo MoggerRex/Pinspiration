@@ -157,6 +157,12 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.delete-confirm-accept:hover {
+  border-color: #a83243;
+  color: #ffffff;
+  background: #8b2635;
+}
+
 .cat-pill.active {
   background: #00385a;
   border-color: #00385a;

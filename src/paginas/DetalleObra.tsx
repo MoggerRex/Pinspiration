@@ -4,7 +4,7 @@ import type { Pin, Artist } from "../tipos";
 import { ME } from "../datos";
 import { tagClass, formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
-import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import { API, fullUrl } from "../api";
 import "./DetalleObra.css";
 
@@ -26,10 +26,16 @@ interface DetalleObraProps {
   allPins: Pin[];
   artistMap: Record<string, Artist>;
   currentUser?: any;
+  isFollowing: boolean;
+  onToggleFollow: (artistId: string, following: boolean) => void;
+  onFeedSignal?: () => void;
+  isSavedInBoard: boolean;
+  savedCount?: number;
+  onDeletePublication: (pin: Pin) => void;
   onBack: () => void;
   onArtist: (id: string) => void;
   onSave: (pin: Pin) => void;
-  onSavedChange?: (pin: Pin, saved: boolean, boardId?: string) => void;
+  onSavedChange?: (pin: Pin, saved: boolean, boardId?: string, savesCount?: number) => void;
   onPin: (pin: Pin) => void;
   onSelectCategory?: (category: string) => void;
   onSelectTag?: (tag: string) => void;
@@ -141,7 +147,7 @@ function getCategoryClass(type: string): string {
 
 // ─── Componente Principal ───────────────────────────────────────────────────
 
-export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onArtist, onSave, onSavedChange, onPin, onSelectCategory, onSelectTag }: DetalleObraProps) {
+export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing, onToggleFollow, onFeedSignal, isSavedInBoard, savedCount, onDeletePublication, onBack, onArtist, onSave, onSavedChange, onPin, onSelectCategory, onSelectTag }: DetalleObraProps) {
   const artist = artistMap[pin.artistId];
 
   // Contadores reales del autor desde vista_detalle_publicacion (GET /api/publicaciones/:id).
@@ -258,6 +264,14 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
       activo = false;
     };
   }, [pin.id, currentUser?.id]);
+
+  useEffect(() => {
+    if (isSavedInBoard) setIsSaved(true);
+  }, [isSavedInBoard]);
+
+  useEffect(() => {
+    if (typeof savedCount === "number") setSavesCount(savedCount);
+  }, [savedCount]);
 
   // Arreglo de medios adjuntos
   const mediaList = detalleMedia;
@@ -391,6 +405,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
       setIsLiked(data.liked);
       setLikesCount(Number(data.likesCount) || 0);
       setInteractionError(null);
+      onFeedSignal?.();
     } catch (err) {
       console.error("Error al guardar me gusta:", err);
       window.alert(`No se pudo guardar el me gusta: ${err instanceof Error ? err.message : "error de conexión"}`);
@@ -400,6 +415,11 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
   }
 
   async function handleToggleSaved() {
+    if (!isSaved) {
+      onSave(pin);
+      return;
+    }
+
     const saved = !isSaved;
     setInteractionsLoading(true);
     try {
@@ -412,8 +432,14 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
       if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
       setIsSaved(data.saved);
       setSavesCount(Number(data.savesCount) || 0);
-      onSavedChange?.(pin, data.saved, data.boardId ? String(data.boardId) : undefined);
+      onSavedChange?.(
+        pin,
+        data.saved,
+        data.boardId ? String(data.boardId) : undefined,
+        Number(data.savesCount) || 0
+      );
       setInteractionError(null);
+      onFeedSignal?.();
     } catch (err) {
       console.error("Error al guardar la publicación:", err);
       window.alert(`No se pudo guardar la publicación: ${err instanceof Error ? err.message : "error de conexión"}`);
@@ -781,11 +807,23 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
               >
                 {pin.title}
               </h1>
-              <button onClick={onBack}
-                style={{ flexShrink: 0, background: "#1a2228", border: "1px solid #242f38", borderRadius: 12, padding: "8px 14px", color: "#7a909f", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 14, display: "flex", alignItems: "center", gap: 6, transition: "color 0.15s, border-color 0.15s", marginTop: 4 }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = "#e8eef2"; e.currentTarget.style.borderColor = "#00385a"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = "#7a909f"; e.currentTarget.style.borderColor = "#242f38"; }}
-              ><ArrowLeft size={16} /> Volver</button>
+              <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: 8, marginTop: 4 }}>
+                {String(pin.artistId) === String(currentUser?.id) && (
+                  <button
+                    type="button"
+                    onClick={() => onDeletePublication(pin)}
+                    style={{ background: "#8b2635", border: 0, borderRadius: 12, padding: "8px 12px", color: "#fff", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Trash2 size={16} />
+                    Eliminar
+                  </button>
+                )}
+                <button onClick={onBack}
+                  style={{ background: "#1a2228", border: "1px solid #242f38", borderRadius: 12, padding: "8px 14px", color: "#7a909f", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 14, display: "flex", alignItems: "center", gap: 6, transition: "color 0.15s, border-color 0.15s" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "#e8eef2"; e.currentTarget.style.borderColor = "#00385a"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = "#7a909f"; e.currentTarget.style.borderColor = "#242f38"; }}
+                ><ArrowLeft size={16} /> Volver</button>
+              </div>
             </div>
 
             {/* Tarjeta de Artista */}
@@ -810,19 +848,25 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, onBack, onAr
                     <span style={{ fontSize: 12 }}><strong style={{ color: "#e8eef2" }}>{formatNum(artistaSiguiendo)}</strong><span style={{ color: "#7a909f" }}> sig</span></span>
                   </div>
                 </div>
-                <button
-                  className="cat-pill"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    whiteSpace: "nowrap",
-                    cursor: "pointer"
-                  }}
-                >
-                  <UserRoundPlus size={16} />
-                  <span>Seguir</span>
-                </button>
+                {String(artist.id) !== String(currentUser?.id) && /^\d+$/.test(String(artist.id)) && (
+                  <button
+                    className="cat-pill"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onToggleFollow(String(artist.id), !isFollowing);
+                    }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      whiteSpace: "nowrap",
+                      cursor: "pointer"
+                    }}
+                  >
+                    <UserRoundPlus size={16} />
+                    <span>{isFollowing ? "Siguiendo" : "Seguir"}</span>
+                  </button>
+                )}
               </div>
               <p style={{ margin: 0, fontSize: 13, color: "#b0c8d8", lineHeight: 1.6, paddingLeft: 62 }}>{artist.bio}</p>
             </div>

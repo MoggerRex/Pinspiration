@@ -7,6 +7,7 @@ import {
   type Transition,
 } from 'framer-motion';
 import { API, fullUrl } from '../api';
+import { SeleccionIntereses } from './SeleccionIntereses';
 import './Login.css';
 
 interface LoginProps {
@@ -169,7 +170,7 @@ const ErrorMessage = ({ message }: { message: string }) => (
 
 export function Login({ onLogin }: LoginProps) {
   const [activeView, setActiveView] = useState<'login' | 'register'>('login');
-  const [step, setStep] = useState<'credentials' | 'avatar'>('credentials');
+  const [step, setStep] = useState<'credentials' | 'avatar' | 'interests'>('credentials');
 
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const axis: 'x' | 'y' = isMobile ? 'y' : 'x';
@@ -281,11 +282,10 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
     const defaultAvatar = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200';
     const foto = (avatarUrl || '').trim();
 
-    // Sin foto: se entra directamente con los datos guardados
+    // Sin foto: pasa directamente a elegir intereses
     if (!foto) {
-      const userData = { ...tempUser, avatar: defaultAvatar };
-      localStorage.setItem('pinspiration_user', JSON.stringify(userData));
-      onLogin(userData);
+      setTempUser({ ...tempUser, avatar: defaultAvatar });
+      setStep('interests');
       return;
     }
 
@@ -309,9 +309,8 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
         return;
       }
 
-      const userData = { ...tempUser, ...data, avatar: fullUrl(data.avatar) || defaultAvatar };
-      localStorage.setItem('pinspiration_user', JSON.stringify(userData));
-      onLogin(userData);
+      setTempUser({ ...tempUser, ...data, avatar: fullUrl(data.avatar) || defaultAvatar });
+      setStep('interests');
     } catch (err) {
       console.error('Error al guardar el avatar:', err);
       setError('No se pudo conectar con el servidor. Revisa que el backend esté corriendo.');
@@ -329,6 +328,12 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleFinishInterests = (intereses: { categorias: string[]; etiquetas: string[] }) => {
+    const userData = { ...tempUser, intereses };
+    localStorage.setItem('pinspiration_user', JSON.stringify(userData));
+    onLogin(userData);
   };
 
   const handleDemoLogin = async () => {
@@ -364,6 +369,9 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
     // reducedMotion="user": respeta la preferencia del sistema (quita los movimientos, deja los fades)
     <MotionConfig reducedMotion="user">
       <div className="login-container">
+        {step === 'interests' ? (
+          <SeleccionIntereses userId={tempUser.id} onComplete={handleFinishInterests} />
+        ) : (
         <AnimatePresence mode="wait" initial={false}>
           {step === 'credentials' ? (
             <motion.div
@@ -546,13 +554,14 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
                     disabled={submitting}
                     style={{ flex: 1, padding: '10px', borderRadius: 12, cursor: 'pointer', background: '#00385a', border: 'none', color: '#e8eef2', fontWeight: 600, opacity: submitting ? 0.6 : 1 }}
                   >
-                    {submitting ? 'Guardando…' : 'Guardar y Entrar'}
+                    {submitting ? 'Guardando…' : 'Guardar y Continuar'}
                   </button>
                 </div>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
+        )}
       </div>
     </MotionConfig>
   );
