@@ -598,26 +598,52 @@ export default function App() {
 
   const handleUpdateUser = (updatedData: any) => {
     const anterior = user;
-    setUser(updatedData); // actualización optimista: el modal se cierra y el perfil cambia al instante
+    const { avatarFile, ...updatedUserData } = updatedData;
+    const updatedUser = { ...updatedUserData };
+    const avatarPreview = updatedUser.avatar;
+    if (avatarFile instanceof File && avatarPreview?.startsWith("blob:")) {
+      updatedUser.avatar = anterior?.avatar || "";
+    }
+    setUser(updatedUser); // actualización optimista: el modal se cierra y el perfil cambia al instante
+
+    let body: BodyInit;
+    let headers: HeadersInit | undefined;
+    if (avatarFile instanceof File) {
+      const formData = new FormData();
+      formData.append("nombre", updatedUser.nombre ?? updatedUser.name ?? "");
+      formData.append("bio", updatedUser.bio ?? "");
+      formData.append("avatar", avatarFile, avatarFile.name);
+      formData.append("headerBg", updatedUser.headerBg ?? "");
+      body = formData;
+    } else {
+      headers = { "Content-Type": "application/json" };
+      body = JSON.stringify({
+        nombre: updatedUser.nombre ?? updatedUser.name,
+        bio: updatedUser.bio,
+        avatar: updatedUser.avatar,
+        headerBg: updatedUser.headerBg,
+      });
+    }
 
     fetch(`${API}/api/perfil/${updatedData.id}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        nombre: updatedData.nombre ?? updatedData.name,
-        bio: updatedData.bio,
-        avatar: updatedData.avatar,
-        headerBg: updatedData.headerBg,
-      }),
+      headers,
+      body,
     })
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
-        aplicarUsuarioApi(data, true); // reemplaza la imagen base64 por la ruta guardada en el servidor
+        aplicarUsuarioApi(data, true);
+        if (typeof avatarPreview === "string" && avatarPreview.startsWith("blob:")) {
+          URL.revokeObjectURL(avatarPreview);
+        }
       })
       .catch((err) => {
         console.error("Error guardando el perfil:", err);
         setUser(anterior); // revertir
+        if (typeof avatarPreview === "string" && avatarPreview.startsWith("blob:")) {
+          URL.revokeObjectURL(avatarPreview);
+        }
         setSavedNotif("No se pudo guardar el perfil");
         setTimeout(() => setSavedNotif(null), 2500);
       });

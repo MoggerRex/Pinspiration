@@ -5,6 +5,7 @@ import { TarjetaPin } from "../componentes/TarjetaPin";
 import { ArrowLeft, Bookmark, UserRoundPlus, Pencil, X, Trash2, Upload } from "lucide-react";
 import { HexColorPicker } from "react-colorful";
 import { API, fullUrl } from "../api";
+import { optimizarImagen } from "../utilidadesCargaImagen";
 
 interface PerfilProps {
   profileId: string | null;
@@ -42,6 +43,7 @@ export function Perfil({
   const [editName, setEditName] = useState("");
   const [editBio, setEditBio] = useState("");
   const [editAvatar, setEditAvatar] = useState("");
+  const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [editHeaderBg, setEditHeaderBg] = useState("");
 
   // Modo de selección de color: "presets" o "picker"
@@ -239,6 +241,7 @@ export function Perfil({
     setEditName(artist.name);
     setEditBio(artist.bio);
     setEditAvatar(artist.avatar);
+    setEditAvatarFile(null);
     setEditHeaderBg(artist.headerBg || "linear-gradient(0deg, #13191d 5%, #00385a 100%)");
     setColorSelectionMode("presets");
     setIsEditing(true);
@@ -252,20 +255,24 @@ export function Perfil({
       name: editName,
       bio: editBio,
       avatar: editAvatar,
+      avatarFile: editAvatarFile,
       headerBg: editHeaderBg,
     };
     onUpdateUser(updated);
     setIsEditing(false);
   };
 
-  const handleAvatarFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setEditAvatar(ev.target?.result as string);
-      };
-      reader.readAsDataURL(file);
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const optimized = await optimizarImagen(file, 512);
+      if (editAvatar.startsWith("blob:")) URL.revokeObjectURL(editAvatar);
+      setEditAvatarFile(optimized);
+      setEditAvatar(URL.createObjectURL(optimized));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "No se pudo optimizar la foto.");
     }
   };
 
@@ -744,13 +751,17 @@ export function Perfil({
                       >
                         <Upload size={14} />
                         <span>Subir imagen</span>
-                        <input type="file" accept="image/*" onChange={handleAvatarFile} style={{ display: "none" }} />
+                        <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleAvatarFile} style={{ display: "none" }} />
                       </label>
                     </div>
                     <input
                       className="search-bar"
                       value={editAvatar}
-                      onChange={(e) => setEditAvatar(e.target.value)}
+                      onChange={(e) => {
+                        if (editAvatar.startsWith("blob:")) URL.revokeObjectURL(editAvatar);
+                        setEditAvatarFile(null);
+                        setEditAvatar(e.target.value);
+                      }}
                       placeholder="O pega una URL de imagen..."
                       style={{ width: "100%", marginTop: 4, padding: "6px 12px", fontSize: 12 }}
                     />

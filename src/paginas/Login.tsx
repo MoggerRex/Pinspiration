@@ -7,6 +7,7 @@ import {
   type Transition,
 } from 'framer-motion';
 import { API, fullUrl } from '../api';
+import { optimizarImagen } from '../utilidadesCargaImagen';
 import { SeleccionIntereses } from './SeleccionIntereses';
 import './Login.css';
 
@@ -185,6 +186,7 @@ export function Login({ onLogin }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [avatar, setAvatar] = useState('');
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -291,16 +293,28 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
 
     setSubmitting(true);
     try {
-      const response = await fetch(`${API}/api/perfil/${tempUser.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nombre: tempUser.nombre,
-          bio: tempUser.bio || '',
-          avatar: foto,
-          headerBg: tempUser.headerBg || tempUser.header_bg || 'linear-gradient(0deg, #13191d 5%, #00385a 100%)',
-        }),
-      });
+      const datosPerfil = {
+        nombre: tempUser.nombre,
+        bio: tempUser.bio || '',
+        avatar: foto,
+        headerBg: tempUser.headerBg || tempUser.header_bg || 'linear-gradient(0deg, #13191d 5%, #00385a 100%)',
+      };
+      let response: Response;
+      if (avatarFile) {
+        const formData = new FormData();
+        Object.entries(datosPerfil).forEach(([key, value]) => formData.append(key, value));
+        formData.append('avatar', avatarFile, avatarFile.name);
+        response = await fetch(`${API}/api/perfil/${tempUser.id}`, {
+          method: 'PUT',
+          body: formData,
+        });
+      } else {
+        response = await fetch(`${API}/api/perfil/${tempUser.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(datosPerfil),
+        });
+      }
 
       const data = await response.json();
 
@@ -310,6 +324,9 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
       }
 
       setTempUser({ ...tempUser, ...data, avatar: fullUrl(data.avatar) || defaultAvatar });
+      if (avatar.startsWith('blob:')) URL.revokeObjectURL(avatar);
+      setAvatarFile(null);
+      setAvatar(fullUrl(data.avatar) || defaultAvatar);
       setStep('interests');
     } catch (err) {
       console.error('Error al guardar el avatar:', err);
@@ -319,14 +336,18 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
     }
   };
 
-  const handleAvatarFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setAvatar(ev.target?.result as string);
-      };
-      reader.readAsDataURL(file);
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const optimized = await optimizarImagen(file, 512);
+      if (avatar.startsWith('blob:')) URL.revokeObjectURL(avatar);
+      setAvatarFile(optimized);
+      setAvatar(URL.createObjectURL(optimized));
+      setError('');
+    } catch (imageError) {
+      setError(imageError instanceof Error ? imageError.message : 'No se pudo optimizar la foto.');
     }
   };
 
@@ -525,7 +546,7 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
 
                 <div className="form-group" style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: 13, color: '#7a909f', fontWeight: 500 }}>Sube una imagen</label>
-                  <input type="file" accept="image/*" onChange={handleAvatarFile} style={{ marginTop: 4, color: '#e8eef2', fontSize: 13 }} />
+                  <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleAvatarFile} style={{ marginTop: 4, color: '#e8eef2', fontSize: 13 }} />
                 </div>
 
                 <div className="form-group" style={{ marginBottom: 20 }}>
@@ -533,7 +554,11 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
                   <input
                     type="text"
                     value={avatar}
-                    onChange={(e) => setAvatar(e.target.value)}
+                    onChange={(e) => {
+                      if (avatar.startsWith('blob:')) URL.revokeObjectURL(avatar);
+                      setAvatarFile(null);
+                      setAvatar(e.target.value);
+                    }}
                     placeholder="https://..."
                     style={{ width: '100%', padding: '10px 14px', background: '#13191d', border: '1.5px solid #242f38', borderRadius: 12, color: '#e8eef2', fontSize: 14, outline: 'none', boxSizing: 'border-box', marginTop: 4 }}
                   />

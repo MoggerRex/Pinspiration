@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { createElement, useState, useEffect, useRef } from "react";
 import type { CSSProperties } from "react";
 import type { Pin, Artist } from "../tipos";
 import { tagClass, formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
-import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2, Box } from "lucide-react";
 import { API, fullUrl } from "../api";
 import "./DetalleObra.css";
 
@@ -161,6 +161,10 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
   const [detalleTags, setDetalleTags] = useState(pin.tags);
   const [detalleMedia, setDetalleMedia] = useState<string[]>(pin.media?.length ? pin.media : [pin.imgUrl]);
   const [detalleRecursos, setDetalleRecursos] = useState(pin.resources || []);
+  const [detalleModelo3d, setDetalleModelo3d] = useState(pin.model3d);
+  const [mostrarModelo3d, setMostrarModelo3d] = useState(false);
+  const [visor3dListo, setVisor3dListo] = useState(false);
+  const [errorVisor3d, setErrorVisor3d] = useState("");
 
   useEffect(() => {
     setArtistaApi(null);
@@ -170,6 +174,8 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
     setDetalleTags(pin.tags);
     setDetalleMedia(pin.media?.length ? pin.media : [pin.imgUrl]);
     setDetalleRecursos(pin.resources || []);
+    setDetalleModelo3d(pin.model3d);
+    setMostrarModelo3d(false);
     if (!/^\d+$/.test(String(pin.id))) return;
 
     let activo = true;
@@ -190,6 +196,12 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
               url: fullUrl(resource.url),
             })));
           }
+          setDetalleModelo3d(data.publicacion.model3d
+            ? {
+                name: data.publicacion.model3d.name,
+                url: fullUrl(data.publicacion.model3d.url),
+              }
+            : undefined);
         }
         if (activo && data?.artista) {
           setArtistaApi({
@@ -205,6 +217,23 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
       activo = false;
     };
   }, [pin.id]);
+
+  useEffect(() => {
+    if (!mostrarModelo3d || !detalleModelo3d) return;
+    let activo = true;
+    setErrorVisor3d("");
+    import("@google/model-viewer")
+      .then(() => {
+        if (activo) setVisor3dListo(true);
+      })
+      .catch((error: unknown) => {
+        console.error("No se pudo cargar el visor 3D:", error);
+        if (activo) setErrorVisor3d("No se pudo cargar el visor 3D. Intenta recargar la página.");
+      });
+    return () => {
+      activo = false;
+    };
+  }, [mostrarModelo3d, detalleModelo3d]);
 
   const [lightbox, setLightbox] = useState(false);
   const [descModalOpen, setDescModalOpen] = useState(false);
@@ -279,6 +308,11 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
   useEffect(() => {
     setActiveMediaIdx(0);
   }, [pin.id]);
+
+  useEffect(() => {
+    setVisor3dListo(false);
+    setErrorVisor3d("");
+  }, [detalleModelo3d?.url]);
 
   // Estado para la paleta dinámica correspondiente a la foto actual
   const [currentPalette, setCurrentPalette] = useState<string[]>([]);
@@ -507,6 +541,73 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
 
           {/* Visualizador de la Obra (Imagen / Carrusel) */}
           <div className="detalle-obra-visual" style={{ position: "sticky", top: 88, display: "flex", justifyContent: "center", alignItems: "flex-start" }}>
+            <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+              {detalleModelo3d && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, alignSelf: "flex-start" }}>
+                  <button
+                    type="button"
+                    aria-pressed={!mostrarModelo3d}
+                    onClick={() => setMostrarModelo3d(false)}
+                    className="btn-secondary"
+                    style={{ padding: "7px 12px", fontSize: 13 }}
+                  >
+                    Renders ({mediaList.length})
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={mostrarModelo3d}
+                    onClick={() => {
+                      setLightbox(false);
+                      setMostrarModelo3d(true);
+                    }}
+                    className="btn-secondary"
+                    style={{
+                      padding: "7px 12px",
+                      fontSize: 13,
+                      borderColor: mostrarModelo3d ? "#688bfb" : undefined,
+                      color: mostrarModelo3d ? "#a9bbff" : undefined,
+                    }}
+                  >
+                    Ver modelo 3D
+                  </button>
+                </div>
+              )}
+
+              {mostrarModelo3d && detalleModelo3d ? (
+                <div
+                  style={{
+                    width: "100%",
+                    height: "min(70vh, 640px)",
+                    minHeight: 360,
+                    overflow: "hidden",
+                    borderRadius: 24,
+                    border: "1px solid #242f38",
+                    background: "#1a2228",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {errorVisor3d ? (
+                    <p role="alert" style={{ color: "#ff8080", padding: 24, textAlign: "center" }}>{errorVisor3d}</p>
+                  ) : visor3dListo ? (
+                    createElement("model-viewer", {
+                      src: detalleModelo3d.url,
+                      poster: currentMediaUrl,
+                      alt: `Vista 3D de ${pin.title}`,
+                      "camera-controls": true,
+                      "auto-rotate": true,
+                      "interaction-prompt": "auto",
+                      "environment-image": "neutral",
+                      "shadow-intensity": "1",
+                      "tone-mapping": "neutral",
+                      style: { width: "100%", height: "100%", backgroundColor: "#1a2228" },
+                    })
+                  ) : (
+                    <span style={{ color: "#7a909f", fontSize: 14 }}>Cargando vista 3D…</span>
+                  )}
+                </div>
+              ) : (
             <div
               className="pin-detail-img-wrap"
               style={{ borderRadius: 24, overflow: "hidden", background: "#1a2228", display: "inline-flex", position: "relative", cursor: "zoom-in" }}
@@ -619,6 +720,8 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
                 Ampliar imagen
               </div>
+            </div>
+              )}
             </div>
           </div>
 
@@ -769,6 +872,11 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                   <div style={{ flexShrink: 0 }}>
                     {detalleRecursos.length > 0 ? (
                       <ResourcesPill resources={detalleRecursos} />
+                    ) : detalleModelo3d ? (
+                      <span style={{ fontSize: 12, color: "#a9bbff", background: "#1d273a", border: "1px solid #2b3b59", borderRadius: 20, padding: "3px 12px", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
+                        <Box size={12} />
+                        Vista 3D incluida
+                      </span>
                     ) : (
                       <span style={{ fontSize: 12, color: "#4a5e6a", background: "#13191d", border: "1px solid #1f2a32", borderRadius: 20, padding: "3px 12px", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>

@@ -3,20 +3,40 @@ import mysql from 'mysql2';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import crypto from 'crypto';
+import multer from 'multer';
+import sharp from 'sharp';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const UPLOAD_TEMP_DIR = path.join(os.tmpdir(), 'pinspiration-upload-tmp');
 fs.mkdirSync(path.join(UPLOADS_DIR, 'avatares'), { recursive: true });
 fs.mkdirSync(path.join(UPLOADS_DIR, 'publicaciones'), { recursive: true });
 fs.mkdirSync(path.join(UPLOADS_DIR, 'recursos'), { recursive: true });
+fs.mkdirSync(UPLOAD_TEMP_DIR, { recursive: true });
+fs.promises.readdir(UPLOAD_TEMP_DIR, { withFileTypes: true })
+  .then((archivos) => Promise.allSettled(archivos
+    .filter((archivo) => archivo.isFile())
+    .map(async (archivo) => {
+      const ruta = path.join(UPLOAD_TEMP_DIR, archivo.name);
+      const estado = await fs.promises.stat(ruta);
+      if (Date.now() - estado.mtimeMs > 24 * 60 * 60 * 1000) await fs.promises.unlink(ruta);
+    })))
+  .then((resultados) => {
+    const errores = resultados.filter(
+      (resultado) => resultado.status === 'rejected' && resultado.reason?.code !== 'ENOENT'
+    );
+    if (errores.length) console.error(`No se pudieron limpiar ${errores.length} carga(s) temporal(es) antigua(s)`);
+  })
+  .catch((err) => console.error('No se pudieron revisar las cargas temporales antiguas:', err));
 
 const app = express();
 
 // Middlewares
 app.use(cors());
-// Límite alto porque las imágenes llegan como data URL (base64) desde el frontend
+// Se conserva el límite para compatibilidad con solicitudes JSON existentes.
 app.use(express.json({ limit: '100mb' }));
 // Imágenes subidas (avatares y publicaciones)
 app.use('/uploads', express.static(UPLOADS_DIR));
@@ -345,7 +365,92 @@ app.post('/api/historial', (req, res) => {
 const dbp = db.promise();
 
 const CATEGORIAS = ['2D', '3D', 'Fotografía', 'Edición'];
-const EXT_POR_MIME = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+const MAX_UPLOAD_IMAGE_BYTES = 15 * 1024 * 1024;
+const MAX_UPLOAD_RESOURCE_BYTES = 50 * 1024 * 1024;
+const MAX_UPLOAD_MODEL_BYTES = 50 * 1024 * 1024;
+const uploadStorage = {
+  _handleFile: (req, file, callback) => {
+    const nombre = crypto.randomBytes(16).toString('hex');
+    const destino = path.join(UPLOAD_TEMP_DIR, nombre);
+    const maxBytes = ['recurso', 'modelo3d'].includes(file.fieldname)
+      ? MAX_UPLOAD_RESOURCE_BYTES
+      : MAX_UPLOAD_IMAGE_BYTES;
+    const archivo = fs.createWriteStream(destino, { flags: 'wx' });
+    let tamano = 0;
+    let fallo = false;
+
+    file.stream.on('data', (chunk) => {
+      tamano += chunk.length;
+      if (tamano > maxBytes && !fallo) {
+        fallo = true;
+        file.stream.unpipe(archivo);
+        file.stream.resume();
+        archivo.once('close', () => {
+          fs.promises.unlink(destino).catch((err) => {
+            if (err.code !== 'ENOENT') console.error('No se pudo limpiar un archivo temporal excedido:', err);
+          }).finally(() => callback(new multer.MulterError('LIMIT_FILE_SIZE', file.fieldname)));
+        });
+        archivo.destroy();
+      }
+    });
+    archivo.on('error', (err) => {
+      if (fallo) return;
+      fallo = true;
+      fs.promises.unlink(destino).catch((cleanupError) => {
+        if (cleanupError.code !== 'ENOENT') console.error('No se pudo limpiar un archivo temporal fallido:', cleanupError);
+      }).finally(() => callback(err));
+    });
+    archivo.on('finish', () => {
+      if (!fallo) callback(null, { destination: UPLOAD_TEMP_DIR, filename: nombre, path: destino, size: tamano });
+    });
+    file.stream.pipe(archivo);
+  },
+  _removeFile: (_req, file, callback) => {
+    fs.unlink(file.path, callback);
+  },
+};
+const upload = multer({
+  storage: uploadStorage,
+  limits: {
+    fileSize: MAX_UPLOAD_RESOURCE_BYTES,
+    files: 22,
+    fields: 30,
+    fieldSize: 1024 * 1024,
+  },
+  fileFilter: (_req, file, callback) => {
+    if (!['medios', 'avatar', 'recurso', 'modelo3d'].includes(file.fieldname)) {
+      return callback(new Error('Campo de archivo no permitido'));
+    }
+    if (file.fieldname === 'modelo3d') {
+      if (path.extname(file.originalname).toLowerCase() !== '.glb') {
+        return callback(new Error('Formato de modelo 3D no permitido (usa .glb)'));
+      }
+      return callback(null, true);
+    }
+    if (file.fieldname === 'recurso') return callback(null, true);
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype)) {
+      return callback(new Error('Formato de imagen no permitido (usa JPG, PNG, WEBP o GIF)'));
+    }
+    callback(null, true);
+  },
+});
+
+const limpiarTemporalesCarga = (req, res, next) => {
+  res.on('finish', () => {
+    const archivos = [
+      ...(req.file ? [req.file] : []),
+      ...Object.values(req.files || {}).flat(),
+    ];
+    Promise.allSettled(archivos.map((archivo) => fs.promises.unlink(archivo.path)))
+      .then((resultados) => {
+        const errores = resultados.filter(
+          (resultado) => resultado.status === 'rejected' && resultado.reason?.code !== 'ENOENT'
+        );
+        if (errores.length) console.error(`No se pudieron eliminar ${errores.length} archivo(s) temporal(es) de carga`);
+      });
+  });
+  next();
+};
 
 const parseUsuarioId = (value) => {
   const id = Number(value);
@@ -664,21 +769,45 @@ const mapComentario = (comentario) => ({
   }),
 });
 
-// Guarda una imagen en formato data URL en /uploads/<carpeta> y devuelve su ruta relativa.
-// En la BD se guarda solo la ruta (/uploads/...) para no depender de la IP o el host del servidor.
-const guardarImagenDataUrl = async (dataUrl, carpeta) => {
-  if (typeof dataUrl !== 'string') throw new Error('Imagen inválida');
-  const coma = dataUrl.indexOf(',');
-  const cabecera = /^data:(image\/[a-z0-9.+-]+);base64$/i.exec(dataUrl.slice(0, coma));
-  const ext = cabecera && EXT_POR_MIME[cabecera[1].toLowerCase()];
-  if (!ext) throw new Error('Formato de imagen no permitido (usa JPG, PNG, WEBP o GIF)');
+const guardarImagenProcesada = async (entrada, carpeta, maxDimension) => {
+  const nombre = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.webp`;
+  const destino = path.join(UPLOADS_DIR, carpeta, nombre);
+  try {
+    await sharp(entrada, { limitInputPixels: 40_000_000 })
+      .rotate()
+      .resize({
+        width: maxDimension,
+        height: maxDimension,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .webp({ quality: 82, effort: 5 })
+      .toFile(destino);
+    const { size } = await fs.promises.stat(destino);
+    if (size > MAX_UPLOAD_IMAGE_BYTES) {
+      throw new Error('La imagen optimizada supera el límite de 15 MB');
+    }
+    return `/uploads/${carpeta}/${nombre}`;
+  } catch (err) {
+    await fs.promises.unlink(destino).catch((cleanupError) => {
+      if (cleanupError.code !== 'ENOENT') console.error('No se pudo limpiar una imagen no válida:', cleanupError);
+    });
+    if (/supera el límite/.test(err.message || '')) throw err;
+    throw new Error('La imagen no es válida o no se pudo optimizar');
+  }
+};
 
-  const nombre = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
-  await fs.promises.writeFile(
-    path.join(UPLOADS_DIR, carpeta, nombre),
-    Buffer.from(dataUrl.slice(coma + 1), 'base64')
-  );
-  return `/uploads/${carpeta}/${nombre}`;
+const guardarImagenArchivo = (archivo, carpeta, maxDimension) =>
+  guardarImagenProcesada(archivo.path, carpeta, maxDimension);
+
+const guardarImagenDataUrl = async (dataUrl, carpeta, maxDimension) => {
+  const coincidencia = /^data:image\/(?:jpeg|png|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(dataUrl || '');
+  if (!coincidencia) throw new Error('Formato de imagen no permitido (usa JPG, PNG, WEBP o GIF)');
+  const contenido = Buffer.from(coincidencia[1], 'base64');
+  if (contenido.length === 0 || contenido.length > MAX_UPLOAD_IMAGE_BYTES) {
+    throw new Error('La imagen debe pesar menos de 15 MB');
+  }
+  return guardarImagenProcesada(contenido, carpeta, maxDimension);
 };
 
 const guardarRecursoDataUrl = async (dataUrl, nombreOriginal) => {
@@ -697,18 +826,133 @@ const guardarRecursoDataUrl = async (dataUrl, nombreOriginal) => {
 
   return {
     url: `/uploads/recursos/${nombre}`,
-    tipoMime: coincidencia[1] || 'application/octet-stream',
+    tipoMime: coincidencia[1] === 'model/gltf-binary'
+      ? 'application/octet-stream'
+      : coincidencia[1] || 'application/octet-stream',
     tamano: contenido.length,
   };
 };
 
-const borrarArchivosSubidos = (rutas) =>
-  rutas.forEach((r) => fs.promises.unlink(path.join(__dirname, r)).catch(() => {}));
+const guardarRecursoArchivo = async (archivo, nombreOriginal) => {
+  if (archivo.size <= 0 || archivo.size > MAX_UPLOAD_RESOURCE_BYTES) {
+    throw new Error('El recurso debe pesar menos de 50 MB');
+  }
+  const extensionOriginal = path.extname(String(nombreOriginal || archivo.originalname || '')).toLowerCase();
+  const extension = /^\.[a-z0-9]{1,10}$/.test(extensionOriginal) ? extensionOriginal : '.bin';
+  const nombre = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${extension}`;
+  const destino = path.join(UPLOADS_DIR, 'recursos', nombre);
+  try {
+    await fs.promises.copyFile(archivo.path, destino);
+  } catch (err) {
+    await fs.promises.unlink(destino).catch((cleanupError) => {
+      if (cleanupError.code !== 'ENOENT') console.error('No se pudo limpiar un recurso incompleto:', cleanupError);
+    });
+    throw err;
+  }
+  return {
+    url: `/uploads/recursos/${nombre}`,
+    tipoMime: archivo.mimetype === 'model/gltf-binary'
+      ? 'application/octet-stream'
+      : archivo.mimetype || 'application/octet-stream',
+    tamano: archivo.size,
+  };
+};
+
+const guardarModelo3dArchivo = async (archivo) => {
+  if (!archivo || archivo.size <= 0 || archivo.size > MAX_UPLOAD_MODEL_BYTES) {
+    throw new Error('El modelo 3D debe pesar hasta 50 MB');
+  }
+
+  const cabecera = Buffer.alloc(20);
+  const archivoTemporal = await fs.promises.open(archivo.path, 'r');
+  try {
+    const { bytesRead } = await archivoTemporal.read(cabecera, 0, cabecera.length, 0);
+    const longitudJson = bytesRead === cabecera.length ? cabecera.readUInt32LE(12) : 0;
+    if (
+      bytesRead !== cabecera.length
+      || cabecera.toString('ascii', 0, 4) !== 'glTF'
+      || cabecera.readUInt32LE(4) !== 2
+      || cabecera.readUInt32LE(8) !== archivo.size
+      || cabecera.readUInt32LE(16) !== 0x4e4f534a
+      || longitudJson < 2
+      || 20 + longitudJson > archivo.size
+    ) {
+      throw new Error('Formato de modelo 3D inválido: el archivo no es un GLB 2.0 válido');
+    }
+
+    const jsonChunk = Buffer.alloc(longitudJson);
+    const lecturaJson = await archivoTemporal.read(jsonChunk, 0, longitudJson, 20);
+    if (lecturaJson.bytesRead !== longitudJson) {
+      throw new Error('Formato de modelo 3D inválido: el archivo GLB está incompleto');
+    }
+
+    let gltf;
+    try {
+      gltf = JSON.parse(jsonChunk.toString('utf8').trimEnd());
+    } catch {
+      throw new Error('Formato de modelo 3D inválido: el contenido GLB está dañado');
+    }
+    if (gltf?.asset?.version !== '2.0') {
+      throw new Error('Formato de modelo 3D inválido: se requiere glTF 2.0');
+    }
+    const pendientes = [gltf];
+    while (pendientes.length > 0) {
+      const valor = pendientes.pop();
+      if (!valor || typeof valor !== 'object') continue;
+      for (const [clave, contenido] of Object.entries(valor)) {
+        if (clave === 'uri' && typeof contenido === 'string' && !/^data:/i.test(contenido)) {
+          throw new Error('Formato de modelo 3D inválido: el GLB debe incluir sus recursos');
+        }
+        if (contenido && typeof contenido === 'object') pendientes.push(contenido);
+      }
+    }
+  } finally {
+    await archivoTemporal.close();
+  }
+
+  const guardado = await guardarRecursoArchivo(archivo, archivo.originalname);
+  return { ...guardado, tipoMime: 'model/gltf-binary' };
+};
+
+const borrarArchivosSubidos = async (rutas) => {
+  const resultados = await Promise.allSettled(rutas.map((url) => {
+    const ruta = rutaArchivoPublicacion(url) || rutaArchivoAvatar(url);
+    return ruta ? fs.promises.unlink(ruta) : Promise.resolve();
+  }));
+  const errores = resultados.filter(
+    (resultado) => resultado.status === 'rejected' && resultado.reason?.code !== 'ENOENT'
+  );
+  if (errores.length) {
+    console.error(`No se pudieron eliminar ${errores.length} archivo(s) subido(s)`);
+  }
+};
 
 const rutaArchivoPublicacion = (url) => {
   const coincidencia = /^\/uploads\/(publicaciones|recursos)\/([^/\\]+)$/.exec(String(url || ''));
   if (!coincidencia || coincidencia[2] === '.' || coincidencia[2] === '..') return null;
   return path.join(UPLOADS_DIR, coincidencia[1], coincidencia[2]);
+};
+
+const rutaArchivoAvatar = (url) => {
+  const texto = String(url || '');
+  const ruta = /^https?:\/\/[^/]+(\/uploads\/avatares\/[^/\\]+)$/i.exec(texto)?.[1] ||
+    (/^\/uploads\/avatares\/[^/\\]+$/.test(texto) ? texto : null);
+  return ruta ? path.join(UPLOADS_DIR, 'avatares', path.basename(ruta)) : null;
+};
+
+const borrarAvatarSiNoReferenciado = async (url) => {
+  const ruta = rutaArchivoAvatar(url);
+  if (!ruta) return;
+  const rutaRelativa = `/uploads/avatares/${path.basename(ruta)}`;
+  const [[{ cantidad }]] = await dbp.query(
+    'SELECT COUNT(*) AS cantidad FROM usuarios WHERE avatar_url = ? OR avatar_url = ?',
+    [rutaRelativa, String(url || '')]
+  );
+  if (Number(cantidad) === 0) {
+    await fs.promises.unlink(ruta).catch((err) => {
+      if (err.code !== 'ENOENT') throw err;
+    });
+  }
 };
 
 const parseJson = (v) => {
@@ -747,7 +991,7 @@ const mapUsuarioSesion = (r) => ({
 });
 
 // POST registro: crea la cuenta con el stored procedure sp_registrar_usuario
-app.post('/api/registro', async (req, res) => {
+app.post('/api/registro', upload.single('avatar'), limpiarTemporalesCarga, async (req, res) => {
   const nombre = String(req.body.nombre ?? '').trim();
   const handle = String(req.body.handle ?? '').trim();
   const email = String(req.body.email ?? '').trim().toLowerCase();
@@ -770,9 +1014,14 @@ app.post('/api/registro', async (req, res) => {
     return res.status(400).json({ error: 'La contraseña debe tener al menos 3 caracteres' });
   }
 
+  let avatarNuevo;
   try {
-    if (avatar.startsWith('data:')) {
-      avatar = await guardarImagenDataUrl(avatar, 'avatares');
+    if (req.file) {
+      avatar = await guardarImagenArchivo(req.file, 'avatares', 512);
+      avatarNuevo = avatar;
+    } else if (avatar.startsWith('data:')) {
+      avatar = await guardarImagenDataUrl(avatar, 'avatares', 512);
+      avatarNuevo = avatar;
     } else if (avatar) {
       const propia = /^https?:\/\/[^/]+(\/uploads\/.+)$/i.exec(avatar);
       if (propia) avatar = propia[1];
@@ -797,11 +1046,13 @@ app.post('/api/registro', async (req, res) => {
     // resultSets[0] = fila del SELECT final del procedure
     const creado = resultSets[0] && resultSets[0][0];
     if (!creado) {
+      if (avatarNuevo) await borrarArchivosSubidos([avatarNuevo]);
       return res.status(500).json({ error: 'No se pudo crear el usuario' });
     }
 
     res.status(201).json(mapUsuarioSesion(creado));
   } catch (err) {
+    if (avatarNuevo) await borrarArchivosSubidos([avatarNuevo]);
     // Errores de validación lanzados con SIGNAL SQLSTATE '45000' en el procedure
     if (err.sqlState === '45000') {
       return res.status(400).json({ error: err.sqlMessage });
@@ -1061,6 +1312,7 @@ app.get('/api/publicaciones/:id', async (req, res) => {
 
     const media = medios.map((m) => m.url_archivo);
 
+    const modelo3d = recursos.find((recurso) => recurso.tipo_mime === 'model/gltf-binary');
     res.json({
       publicacion: {
         id: String(r.publicacion_id),
@@ -1074,7 +1326,12 @@ app.get('/api/publicaciones/:id', async (req, res) => {
         media,
         imgUrl: media[0] || r.portada_url || '',
         tags: etiquetas.map((e) => e.nombre),
-        resources: recursos.map((x) => ({ name: x.nombre, url: `/api/recursos/${x.id}` })),
+        resources: recursos
+          .filter((recurso) => recurso.tipo_mime !== 'model/gltf-binary')
+          .map((x) => ({ name: x.nombre, url: `/api/recursos/${x.id}` })),
+        model3d: modelo3d
+          ? { name: modelo3d.nombre, url: `/api/recursos/${modelo3d.id}?preview=1` }
+          : undefined,
         publishedAt: r.published_at
           ? new Date(r.published_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
           : undefined,
@@ -1162,13 +1419,30 @@ app.get('/api/recursos/:id', async (req, res) => {
   }
 
   try {
-    const [rows] = await dbp.query('SELECT nombre, url_archivo FROM recursos WHERE id = ? LIMIT 1', [id]);
+    const [rows] = await dbp.query(
+      'SELECT nombre, url_archivo, tipo_mime FROM recursos WHERE id = ? LIMIT 1',
+      [id]
+    );
     if (rows.length === 0 || !String(rows[0].url_archivo).startsWith('/uploads/recursos/')) {
       return res.status(404).json({ error: 'Recurso no encontrado' });
     }
 
     const recurso = rows[0];
     const ruta = path.join(UPLOADS_DIR, 'recursos', path.basename(recurso.url_archivo));
+    if (req.query.preview === '1') {
+      if (recurso.tipo_mime !== 'model/gltf-binary') {
+        return res.status(400).json({ error: 'El recurso no es un modelo 3D compatible' });
+      }
+      res.setHeader('Content-Type', 'model/gltf-binary');
+      res.setHeader('Content-Disposition', 'inline');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.sendFile(ruta, (err) => {
+        if (err) {
+          console.error('Error al mostrar el modelo 3D:', err);
+          if (!res.headersSent) res.status(500).json({ error: 'Error al mostrar el modelo 3D' });
+        }
+      });
+    }
     res.download(ruta, recurso.nombre, (err) => {
       if (err) {
         console.error('Error al descargar recurso:', err);
@@ -1243,7 +1517,7 @@ app.get('/api/perfil/:usuarioId', async (req, res) => {
 });
 
 // PUT perfil: guarda la personalización (nombre, bio, foto y color del encabezado)
-app.put('/api/perfil/:usuarioId', async (req, res) => {
+app.put('/api/perfil/:usuarioId', upload.single('avatar'), limpiarTemporalesCarga, async (req, res) => {
   const id = Number(req.params.usuarioId);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'ID de usuario inválido' });
@@ -1265,9 +1539,21 @@ app.put('/api/perfil/:usuarioId', async (req, res) => {
     return res.status(400).json({ error: 'Color de encabezado inválido' });
   }
 
+  let avatarNuevo;
+  let avatarPersistido = false;
   try {
-    if (avatar.startsWith('data:')) {
-      avatar = await guardarImagenDataUrl(avatar, 'avatares');
+    const [[usuarioAnterior]] = await dbp.query(
+      'SELECT avatar_url FROM usuarios WHERE id = ?',
+      [id]
+    );
+    if (!usuarioAnterior) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    if (req.file) {
+      avatar = await guardarImagenArchivo(req.file, 'avatares', 512);
+      avatarNuevo = avatar;
+    } else if (avatar.startsWith('data:')) {
+      avatar = await guardarImagenDataUrl(avatar, 'avatares', 512);
+      avatarNuevo = avatar;
     } else {
       // Si llega una URL absoluta de nuestro propio /uploads, se guarda solo la ruta relativa
       const propia = /^https?:\/\/[^/]+(\/uploads\/.+)$/i.exec(avatar);
@@ -1281,6 +1567,13 @@ app.put('/api/perfil/:usuarioId', async (req, res) => {
       'UPDATE usuarios SET nombre = ?, bio = ?, avatar_url = ?, header_bg = ? WHERE id = ?',
       [nombre, bio || null, avatar || null, headerBg, id]
     );
+    avatarPersistido = true;
+
+    try {
+      await borrarAvatarSiNoReferenciado(usuarioAnterior.avatar_url);
+    } catch (cleanupError) {
+      console.error('No se pudo limpiar el avatar anterior:', cleanupError);
+    }
 
     const [rows] = await dbp.query('SELECT * FROM vista_perfil_usuario WHERE usuario_id = ? LIMIT 1', [id]);
     if (rows.length === 0) {
@@ -1288,6 +1581,7 @@ app.put('/api/perfil/:usuarioId', async (req, res) => {
     }
     res.json(mapUsuarioPerfil(rows[0]));
   } catch (err) {
+    if (avatarNuevo && !avatarPersistido) await borrarArchivosSubidos([avatarNuevo]);
     console.error('Error al actualizar perfil:', err);
     const esImagen = /imagen|formato/i.test(err.message || '');
     res.status(esImagen ? 400 : 500).json({ error: esImagen ? err.message : 'Error al guardar el perfil' });
@@ -1295,8 +1589,20 @@ app.put('/api/perfil/:usuarioId', async (req, res) => {
 });
 
 // POST publicación: guarda las imágenes en disco y llama al stored procedure
-app.post('/api/publicaciones', async (req, res) => {
-  const { usuario_id, titulo, descripcion, categoria, software, exif, medios, paleta, etiquetas, recurso } = req.body;
+app.post('/api/publicaciones', upload.fields([
+  { name: 'medios', maxCount: 20 },
+  { name: 'recurso', maxCount: 1 },
+  { name: 'modelo3d', maxCount: 1 },
+]), limpiarTemporalesCarga, async (req, res) => {
+  const { usuario_id, titulo, descripcion, categoria, software } = req.body;
+  const exif = parseJson(req.body.exif);
+  const paleta = parseJson(req.body.paleta);
+  const etiquetas = parseJson(req.body.etiquetas);
+  const recurso = parseJson(req.body.recurso);
+  const medios = parseJson(req.body.medios) || req.body.medios;
+  const archivosImagen = req.files?.medios || [];
+  const archivoRecurso = req.files?.recurso?.[0];
+  const archivoModelo3d = req.files?.modelo3d?.[0];
 
   const usuarioId = Number(usuario_id);
   if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
@@ -1308,7 +1614,11 @@ app.post('/api/publicaciones', async (req, res) => {
   if (!CATEGORIAS.includes(categoria)) {
     return res.status(400).json({ error: 'Categoría inválida' });
   }
-  if (!Array.isArray(medios) || medios.length < 1 || medios.length > 20) {
+  if (archivoModelo3d && categoria !== '3D') {
+    return res.status(400).json({ error: 'Solo las publicaciones 3D pueden incluir un modelo GLB' });
+  }
+  const cantidadImagenes = archivosImagen.length || (Array.isArray(medios) ? medios.length : 0);
+  if (cantidadImagenes < 1 || cantidadImagenes > 20) {
     return res.status(400).json({ error: 'Debes subir entre 1 y 20 imágenes' });
   }
 
@@ -1326,19 +1636,33 @@ app.post('/api/publicaciones', async (req, res) => {
   const archivosSubidos = [];
   let publicacionId;
   let recursoGuardado;
+  let modelo3dGuardado;
   try {
-    for (const m of medios) {
-      const ruta = await guardarImagenDataUrl(m, 'publicaciones');
+    const imagenes = archivosImagen.length ? archivosImagen : medios;
+    for (const imagen of imagenes) {
+      const ruta = imagen.path
+        ? await guardarImagenArchivo(imagen, 'publicaciones', 2560)
+        : await guardarImagenDataUrl(imagen, 'publicaciones', 2560);
       rutas.push(ruta);
       archivosSubidos.push(ruta);
     }
 
-    if (recurso) {
-      const archivoRecurso = await guardarRecursoDataUrl(recurso.data, recurso.nombre);
-      archivosSubidos.push(archivoRecurso.url);
+    if (archivoRecurso || recurso) {
+      const recursoGuardadoInfo = archivoRecurso
+        ? await guardarRecursoArchivo(archivoRecurso, req.body.recurso_nombre)
+        : await guardarRecursoDataUrl(recurso.data, recurso.nombre);
+      archivosSubidos.push(recursoGuardadoInfo.url);
       recursoGuardado = {
-        nombre: textoOpcional(recurso.nombre, 150) || 'Recurso',
-        ...archivoRecurso,
+        nombre: textoOpcional(req.body.recurso_nombre || recurso?.nombre, 150) || 'Recurso',
+        ...recursoGuardadoInfo,
+      };
+    }
+    if (archivoModelo3d) {
+      const modelo3dGuardadoInfo = await guardarModelo3dArchivo(archivoModelo3d);
+      archivosSubidos.push(modelo3dGuardadoInfo.url);
+      modelo3dGuardado = {
+        nombre: textoOpcional(archivoModelo3d.originalname, 150) || 'Modelo 3D.glb',
+        ...modelo3dGuardadoInfo,
       };
     }
 
@@ -1377,6 +1701,19 @@ app.post('/api/publicaciones', async (req, res) => {
       );
       recursoGuardado.id = insercionRecurso.insertId;
     }
+    if (modelo3dGuardado) {
+      const [insercionModelo] = await dbp.query(
+        'INSERT INTO recursos (publicacion_id, nombre, url_archivo, tipo_mime, tamano_bytes) VALUES (?, ?, ?, ?, ?)',
+        [
+          publicacionId,
+          modelo3dGuardado.nombre,
+          modelo3dGuardado.url,
+          modelo3dGuardado.tipoMime,
+          modelo3dGuardado.tamano,
+        ]
+      );
+      modelo3dGuardado.id = insercionModelo.insertId;
+    }
 
     res.status(201).json({
       id: String(publicacionId),
@@ -1384,6 +1721,9 @@ app.post('/api/publicaciones', async (req, res) => {
       resources: recursoGuardado
         ? [{ name: recursoGuardado.nombre, url: `/api/recursos/${recursoGuardado.id}` }]
         : [],
+      model3d: modelo3dGuardado
+        ? { name: modelo3dGuardado.nombre, url: `/api/recursos/${modelo3dGuardado.id}?preview=1` }
+        : undefined,
     });
   } catch (err) {
     console.error('Error al crear publicación:', err);
@@ -1394,7 +1734,7 @@ app.post('/api/publicaciones', async (req, res) => {
         console.error('Error al revertir la publicación incompleta:', cleanupError);
       }
     }
-    borrarArchivosSubidos(archivosSubidos);
+    await borrarArchivosSubidos(archivosSubidos);
 
     if (err.sqlState === '45000') {
       return res.status(400).json({ error: err.sqlMessage });
@@ -1405,6 +1745,22 @@ app.post('/api/publicaciones', async (req, res) => {
     const esArchivo = /imagen|archivo|recurso|formato|pesa/i.test(err.message || '');
     res.status(esArchivo ? 400 : 500).json({ error: esArchivo ? err.message : 'Error al crear la publicación' });
   }
+});
+
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (err instanceof multer.MulterError) {
+    const limiteArchivo = ['recurso', 'modelo3d'].includes(err.field) ? '50 MB' : '15 MB';
+    const error = err.code === 'LIMIT_FILE_SIZE'
+      ? `El archivo supera el límite permitido de ${limiteArchivo}`
+      : 'La carga excede los límites permitidos';
+    return res.status(400).json({ error });
+  }
+  if (/^Formato de imagen|^Formato de modelo|^Campo de archivo/.test(err.message || '')) {
+    return res.status(400).json({ error: err.message });
+  }
+  console.error('Error al procesar la carga:', err);
+  res.status(500).json({ error: 'Error al procesar la carga de archivos' });
 });
 
 // Iniciar servidor

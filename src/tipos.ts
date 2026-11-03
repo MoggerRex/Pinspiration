@@ -13,7 +13,8 @@ export interface Pin {
   software?: string;
   exif?: Record<string, string>;
   media?: string[]; // <-- Agregar esta línea
-  resources?: { name: string }[];
+  resources?: { name: string; url?: string }[];
+  model3d?: { name: string; url: string };
   type: PinType;
   tags: string[];
   imgUrl: string;

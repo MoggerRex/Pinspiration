@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { DragEvent } from "react";
 import type { Pin, PinType } from "../tipos";
 import { extractColors, mockExif } from "../utilidadesImagen";
+import { optimizarImagen } from "../utilidadesCargaImagen";
 import { IconCheck, IconImage, IconZap } from "../componentes/Iconos";
 import { ArrowLeft, Upload, FileCheck, Plus, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 
@@ -19,6 +20,9 @@ interface CrearPublicacionProps {
 export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublicacionProps) {
   const [step, setStep] = useState<CrearStep>("upload");
   const [mediaList, setMediaList] = useState<string[]>([]);
+  const [mediaFiles, setMediaFiles] = useState<File[]>([]);
+  const [uploadError, setUploadError] = useState("");
+  const mediaObjectUrls = useRef(new Set<string>());
   const [activeMediaIdx, setActiveMediaIdx] = useState(0);
   const [colors, setColors] = useState<string[]>([]);
   const [exif, setExif] = useState<Record<string, string> | null>(null);
@@ -36,6 +40,12 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   const [hasResource, setHasResource] = useState(false);
   const [resourceName, setResourceName] = useState("");
   const [resourceFile, setResourceFile] = useState<File | null>(null);
+  const [modelFile, setModelFile] = useState<File | null>(null);
+  const [modelError, setModelError] = useState("");
+
+  useEffect(() => () => {
+    mediaObjectUrls.current.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
 
   const STEPS: CrearStep[] = ["upload", "processing", "ai", "form", "recursos", "publishing", "done"];
   const STEP_LABELS = ["Imagen", "Análisis", "IA", "Detalles", "Recursos", "Publicar", "¡Listo!"];
@@ -65,28 +75,29 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     }
   }, [activeMediaIdx, mediaList]);
 
-  function handleFiles(files: FileList | File[]) {
+  async function handleFiles(files: FileList | File[]) {
     const fileArr = Array.from(files);
     const availableSlots = 20 - mediaList.length;
     if (availableSlots <= 0) return;
 
     const filesToProcess = fileArr.slice(0, availableSlots);
 
-    filesToProcess.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const url = e.target?.result as string;
-        setMediaList((prev) => {
-          const isFirst = prev.length === 0;
-          const updated = [...prev, url];
-          if (isFirst && file.type === "image/jpeg") {
-            setExif(mockExif());
-          }
-          return updated;
-        });
-      };
-      reader.readAsDataURL(file);
-    });
+    setUploadError("");
+    try {
+      const optimizedFiles: File[] = [];
+      for (const file of filesToProcess) {
+        optimizedFiles.push(await optimizarImagen(file, 2560));
+      }
+      const previews = optimizedFiles.map((file) => URL.createObjectURL(file));
+      previews.forEach((url) => mediaObjectUrls.current.add(url));
+      setMediaFiles((prev) => [...prev, ...optimizedFiles]);
+      setMediaList((prev) => [...prev, ...previews]);
+      if (mediaList.length === 0 && filesToProcess[0]?.type === "image/jpeg") {
+        setExif(mockExif());
+      }
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "No se pudo optimizar la imagen.");
+    }
   }
 
   function handleDrop(e: DragEvent) {
@@ -96,7 +107,25 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     }
   }
 
+  function handleModelFile(file?: File) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".glb")) {
+      setModelFile(null);
+      setModelError("La vista previa interactiva acepta únicamente archivos .glb.");
+      return;
+    }
+    if (file.size === 0 || file.size > 50 * 1024 * 1024) {
+      setModelFile(null);
+      setModelError("El modelo debe pesar más de 0 y hasta 50 MB.");
+      return;
+    }
+    setModelError("");
+    setModelFile(file);
+  }
+
   function removeMedia(index: number) {
+    URL.revokeObjectURL(mediaList[index]);
+    mediaObjectUrls.current.delete(mediaList[index]);
     setMediaList((prev) => {
       const next = prev.filter((_, i) => i !== index);
       if (next.length === 0) {
@@ -110,11 +139,18 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
       }
       return next;
     });
+    setMediaFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
   function handleReorder(fromIndex: number, toIndex: number) {
     if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
     setMediaList((prev) => {
+      const updated = [...prev];
+      const [moved] = updated.splice(fromIndex, 1);
+      updated.splice(toIndex, 0, moved);
+      return updated;
+    });
+    setMediaFiles((prev) => {
       const updated = [...prev];
       const [moved] = updated.splice(fromIndex, 1);
       updated.splice(toIndex, 0, moved);
@@ -137,7 +173,8 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   // Validación real con Gemini API
   useEffect(() => {
     const mainImg = mediaList[0];
-    if (step !== "ai" || !mainImg) return;
+    const mainFile = mediaFiles[0];
+    if (step !== "ai" || !mainImg || !mainFile) return;
 
     setAiProgress(0);
     setAiResult(null);
@@ -153,8 +190,13 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     async function validarImagen() {
       try {
         const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash-lite" });
-        const base64Data = mainImg.split(",")[1];
-        const mimeType = mainImg.split(";")[0].split(":")[1];
+        const bytes = new Uint8Array(await mainFile.arrayBuffer());
+        let binary = "";
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        const base64Data = btoa(binary);
+        const mimeType = mainFile.type;
 
         const prompt = `
           Actúa como un estricto moderador de contenido para "Pinspiration", una plataforma profesional para artistas visuales.
@@ -208,7 +250,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     validarImagen();
 
     return () => clearInterval(iv);
-  }, [step, mediaList]);
+  }, [step, mediaList, mediaFiles]);
 
   async function handlePublish() {
     setStep("publishing");
@@ -227,49 +269,40 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     const categoria = (category as PinType) || "2D";
 
     try {
-      const recurso = resourceFile
-        ? {
-            nombre: finalResourceName || resourceFile.name,
-            data: await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => {
-                if (typeof reader.result === "string") resolve(reader.result);
-                else reject(new Error("No se pudo leer el archivo de recurso"));
-              };
-              reader.onerror = () => reject(new Error("No se pudo leer el archivo de recurso"));
-              reader.readAsDataURL(resourceFile);
-            }),
-            tipoMime: resourceFile.type || "application/octet-stream",
-          }
-        : null;
-
       // Se mantiene el mínimo de 2.2 s para que se vea la animación de "Publicando"
+      const formData = new FormData();
+      formData.append("usuario_id", String(currentUser?.id || ""));
+      formData.append("titulo", title || "Mi obra");
+      formData.append("descripcion", desc || "");
+      formData.append("categoria", categoria);
+      formData.append("software", software);
+      formData.append("exif", JSON.stringify(
+        categoria === "Fotografía"
+          ? {
+              camara: exifCamera,
+              lente: exifLens,
+              apertura: exifAperture,
+              velocidad: exifShutterSpeed,
+              iso: exifIso,
+              focal: exifFocalLength,
+            }
+          : null
+      ));
+      formData.append("paleta", JSON.stringify(colors));
+      formData.append("etiquetas", JSON.stringify(tagList));
+      if (resourceFile) {
+        formData.append("recurso", resourceFile, resourceFile.name);
+        formData.append("recurso_nombre", finalResourceName || resourceFile.name);
+      }
+      if (categoria === "3D" && modelFile) {
+        formData.append("modelo3d", modelFile, modelFile.name);
+      }
+      mediaFiles.forEach((file) => formData.append("medios", file, file.name));
+
       const [res] = await Promise.all([
         fetch(`${API}/api/publicaciones`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            usuario_id: currentUser?.id,
-            titulo: title || "Mi obra",
-            descripcion: desc || null,
-            categoria,
-            software: software || null,
-            exif:
-              categoria === "Fotografía"
-                ? {
-                    camara: exifCamera,
-                    lente: exifLens,
-                    apertura: exifAperture,
-                    velocidad: exifShutterSpeed,
-                    iso: exifIso,
-                    focal: exifFocalLength,
-                  }
-                : null,
-            medios: mediaList,
-            paleta: colors,
-            etiquetas: tagList,
-            recurso,
-          }),
+          body: formData,
         }),
         new Promise((r) => setTimeout(r, 2200)),
       ]);
@@ -292,6 +325,12 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               ...resource,
               url: fullUrl(resource.url),
             }))
+          : undefined,
+        model3d: data.model3d
+          ? {
+              name: data.model3d.name,
+              url: fullUrl(data.model3d.url),
+            }
           : undefined,
         publishedAt: new Date().toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" }),
         type: categoria,
@@ -739,8 +778,13 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               Selecciona tu imagen
             </h2>
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
-              Sube las imágenes o archivos multimedia de tu obra (hasta 20 elementos).
+              Sube hasta 20 imágenes. Se optimizan antes de guardarse.
             </p>
+            {uploadError && (
+              <p role="alert" style={{ color: "#ff9b9b", fontSize: 13, margin: "0 0 16px" }}>
+                {uploadError}
+              </p>
+            )}
 
             {mediaList.length === 0 ? (
               <label
@@ -1370,10 +1414,88 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             </h2>
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
               Puedes compartir archivos complementarios (.zip, .obj, pinceles, etc.)
-              para que otros artistas los descarguen.
+              para que otros artistas los descarguen. Para una vista previa 3D interactiva,
+              adjunta un modelo .glb.
             </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {category === "3D" && (
+                <div
+                  style={{
+                    padding: 16,
+                    background: "#13191d",
+                    borderRadius: 12,
+                    border: "1px solid #242f38",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                  }}
+                >
+                  <div>
+                    <strong style={{ color: "#e8eef2", fontSize: 14 }}>Vista previa interactiva (opcional)</strong>
+                    <p style={{ color: "#7a909f", fontSize: 12, margin: "4px 0 0" }}>
+                      Sube un archivo .glb de hasta 50 MB. Se mostrará en 3D junto con tus renders.
+                    </p>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      border: "1.5px dashed #2b3b59",
+                      borderRadius: 12,
+                      padding: "18px 14px",
+                      background: "#1a2228",
+                    }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleModelFile(e.dataTransfer.files[0]);
+                    }}
+                  >
+                    <label style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
+                      <input
+                        type="file"
+                        accept=".glb,model/gltf-binary"
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          handleModelFile(e.target.files?.[0]);
+                          e.target.value = "";
+                        }}
+                      />
+                      {modelFile ? (
+                        <>
+                        <FileCheck size={22} style={{ color: "#5ddf9a", flexShrink: 0 }} />
+                        <span style={{ color: "#e8eef2", fontSize: 13, overflowWrap: "anywhere" }}>
+                          {modelFile.name} — {(modelFile.size / (1024 * 1024)).toFixed(2)} MB
+                        </span>
+                        </>
+                      ) : (
+                        <>
+                        <Upload size={20} style={{ color: "#688bfb" }} />
+                        <span style={{ color: "#7a909f", fontSize: 13 }}>Haz clic o arrastra aquí tu modelo .glb</span>
+                        </>
+                      )}
+                    </label>
+                    {modelFile && (
+                      <button
+                        type="button"
+                        aria-label="Quitar modelo 3D"
+                        onClick={() => {
+                          setModelFile(null);
+                          setModelError("");
+                        }}
+                        style={{ background: "transparent", border: 0, color: "#a9bac5", cursor: "pointer", display: "flex", padding: 4 }}
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    )}
+                  </div>
+                  {modelError && <span role="alert" style={{ color: "#ff8080", fontSize: 12 }}>{modelError}</span>}
+                </div>
+              )}
+
               <label
                 style={{
                   display: "flex",
