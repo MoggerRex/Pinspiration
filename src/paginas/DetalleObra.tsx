@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { CSSProperties } from "react";
 import type { Pin, Artist } from "../tipos";
-import { ME } from "../datos";
 import { tagClass, formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
 import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
@@ -151,7 +150,6 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
   const artist = artistMap[pin.artistId];
 
   // Contadores reales del autor desde vista_detalle_publicacion (GET /api/publicaciones/:id).
-  // Los pines de ejemplo (ids "p1", "p2"...) conservan los datos locales de src/datos.ts.
   const [artistaApi, setArtistaApi] = useState<{
     seguidores: number;
     siguiendo: number;
@@ -1310,7 +1308,13 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
 
             {/* Formulario e Input de Comentarios */}
             <form onSubmit={handleAddComment} style={{ padding: "16px 28px 24px", borderTop: "1px solid #242f38", background: "#1a2228", display: "flex", gap: 12, alignItems: "center", flexShrink: 0 }}>
-              <img src={currentUser?.avatar || ME.avatar} alt="Tú" style={{ width: 38, height: 38, borderRadius: "50%", objectFit: "cover", border: "1.5px solid #00385a", flexShrink: 0 }} />
+              {currentUser?.avatar ? (
+                <img src={currentUser.avatar} alt="Tú" style={{ width: 38, height: 38, borderRadius: "50%", objectFit: "cover", border: "1.5px solid #00385a", flexShrink: 0 }} />
+              ) : (
+                <div aria-hidden="true" style={{ width: 38, height: 38, borderRadius: "50%", display: "grid", placeItems: "center", background: "#24323b", color: "#b0c8d8", fontWeight: 600, border: "1.5px solid #00385a", flexShrink: 0 }}>
+                  {currentUser?.nombre?.trim()?.[0]?.toUpperCase() || "?"}
+                </div>
+              )}
               <input
                 type="text"
                 placeholder="Escribe un comentario..."

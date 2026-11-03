@@ -24,7 +24,7 @@
   /* Orden exacto en escritorio */
   .nav-item-hamburger  { order: 1; }
   .nav-item-logo       { order: 2; margin-right: 4px; }
-  .nav-item-search     { order: 3; flex: 1; }
+  .nav-item-search     { order: 3; flex: 1; min-width: 180px; }
   .nav-item-categorias { order: 4; display: flex; align-items: center; gap: 6px; }
   .nav-item-feed       { order: 5; position: relative; }
   .nav-item-tableros   { order: 6; }
@@ -68,6 +68,46 @@
   padding: 8px 16px;
   border-radius: 24px;
   border: 1px solid #242f38;
+}
+
+.nav-item-search {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.search-result-tabs {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 16px;
+}
+
+.search-result-tab {
+  position: relative;
+  padding: 9px 2px 8px;
+  color: #7a909f;
+  background: transparent;
+  border: 0;
+  font: 500 13px 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.search-result-tab:hover,
+.search-result-tab.active {
+  color: #e8eef2;
+}
+
+.search-result-tab.active::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: #5db8e8;
+  border-radius: 2px;
+  content: "";
 }
 
 .search-container input {
@@ -186,6 +226,10 @@
 
   /* Fila 2: Buscador */
   .nav-row-2 {
+    width: 100%;
+  }
+
+  .nav-item-search {
     width: 100%;
   }
 

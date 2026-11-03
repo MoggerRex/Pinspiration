@@ -8,6 +8,8 @@ import "./BarraNavegacion.css";
 interface BarraNavegacionProps {
   search: string;
   onSearch: (v: string) => void;
+  searchType: "publicaciones" | "artistas";
+  onSearchType: (type: "publicaciones" | "artistas") => void;
   view: View;
   onView: (v: View) => void;
   activeType: PinType | "Todos";
@@ -20,6 +22,8 @@ interface BarraNavegacionProps {
 export function BarraNavegacion({
   search,
   onSearch,
+  searchType,
+  onSearchType,
   view,
   onView,
   activeType,
@@ -71,20 +75,44 @@ export function BarraNavegacion({
 
       {/* FILA 2: Barra de Búsqueda */}
       <div className="nav-row-2">
-        <div className="search-container nav-item-search">
-          <IconSearch />
-          <input
-            type="text"
-            placeholder="Busca arte, artistas, etiquetas..."
-            value={search}
-            onChange={(e) => onSearch(e.target.value)}
-          />
+        <div className="nav-item-search">
+          <div className="search-container">
+            <IconSearch />
+            <input
+              type="text"
+              placeholder="Busca arte, artistas, etiquetas..."
+              value={search}
+              onChange={(e) => onSearch(e.target.value)}
+            />
+          </div>
+          {search.trim() && (
+            <div className="search-result-tabs" role="tablist" aria-label="Tipo de resultados">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={searchType === "publicaciones"}
+                className={`search-result-tab ${searchType === "publicaciones" ? "active" : ""}`}
+                onClick={() => onSearchType("publicaciones")}
+              >
+                Publicaciones
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={searchType === "artistas"}
+                className={`search-result-tab ${searchType === "artistas" ? "active" : ""}`}
+                onClick={() => onSearchType("artistas")}
+              >
+                Artistas
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
       {/* FILA 3: Para ti/Siguiendo, Categorías (Scrollable), Tableros */}
       <div className="nav-row-3">
-        <div className="nav-feed-wrapper nav-item-feed">
+        {!search.trim() && <div className="nav-feed-wrapper nav-item-feed">
           <button
             onClick={() => setMenuAbierto(!menuAbierto)}
             className="boton-nav"
@@ -109,9 +137,9 @@ export function BarraNavegacion({
               </button>
             </div>
           )}
-        </div>
+        </div>}
 
-        <div className="nav-categorias nav-item-categorias">
+        {!search.trim() && <div className="nav-categorias nav-item-categorias">
           {(["Todos", ...TYPE_LABELS] as const).map((t) => (
             <button
               key={t}
@@ -124,7 +152,7 @@ export function BarraNavegacion({
               {t}
             </button>
           ))}
-        </div>
+        </div>}
 
         <button
           className={`boton-nav nav-item-tableros ${view === "boards" ? "active" : ""}`}

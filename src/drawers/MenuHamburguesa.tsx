@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import type { Board, Pin, View } from "../tipos";
-import { ME } from "../datos";
 import { IconUpload, IconUser, IconBookmark, IconHistory, IconInfo, IconX } from "../componentes/Iconos";
 import { SunMoon, LogOut, Users } from "lucide-react";
 
@@ -52,10 +51,16 @@ export function MenuHamburguesa({ open, onClose, boards, history, onNavigate, on
 
         {/* Info rápida del usuario */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px", borderBottom: "1px solid #242f38" }}>
-          <img src={user?.avatar || ME.avatar} alt={user?.nombre || ME.name} style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", border: "2px solid #00385a" }} />
+          {user?.avatar ? (
+            <img src={user.avatar} alt={user?.nombre || ""} style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", border: "2px solid #00385a" }} />
+          ) : (
+            <div aria-hidden="true" style={{ width: 44, height: 44, borderRadius: "50%", display: "grid", placeItems: "center", background: "#24323b", color: "#b0c8d8", fontWeight: 600, border: "2px solid #00385a" }}>
+              {user?.nombre?.trim()?.[0]?.toUpperCase() || "?"}
+            </div>
+          )}
           <div>
-            <p style={{ margin: 0, fontWeight: 600, fontSize: 15, color: "#e8eef2" }}>{user?.nombre || ME.name}</p>
-            <p style={{ margin: 0, fontSize: 12, color: "#7a909f" }}>{user?.handle || `@${ME.handle}`}</p>
+            <p style={{ margin: 0, fontWeight: 600, fontSize: 15, color: "#e8eef2" }}>{user?.nombre || ""}</p>
+            <p style={{ margin: 0, fontSize: 12, color: "#7a909f" }}>{user?.handle ? `@${String(user.handle).replace(/^@/, "")}` : ""}</p>
           </div>
         </div>
 

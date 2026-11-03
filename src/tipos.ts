@@ -36,13 +36,6 @@ export interface Artist {
   headerBg?: string; // ← Añade esta línea
 }
 
-// El usuario actual (ME) tiene más campos que un artista normal
-export interface Me extends Artist {
-  cover: string;
-  totalLikes: number;
-  totalSaves: number;
-}
-
 export interface Board {
   id: string;
   name: string;

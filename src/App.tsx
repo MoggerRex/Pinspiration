@@ -1,6 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
 import type { Artist, Board, Pin, PinType, View } from "./tipos";
-import { ARTISTS, INITIAL_BOARDS, ME, PINS } from "./datos";
 
 import { BarraNavegacion } from "./componentes/BarraNavegacion";
 import { ModalGuardarPin } from "./componentes/VentanasFlotantes";
@@ -32,6 +31,7 @@ export default function App() {
 
   const [view, setView] = useState<View>("feed");
   const [search, setSearch] = useState("");
+  const [searchType, setSearchType] = useState<"publicaciones" | "artistas">("publicaciones");
   const [feedMode, setFeedMode] = useState<"Siguiendo" | "Para ti">(() => {
     const saved = localStorage.getItem("opcionFeed");
     return saved === "Siguiendo" ? "Siguiendo" : "Para ti";
@@ -52,7 +52,10 @@ export default function App() {
   const [feedPins, setFeedPins] = useState<Pin[]>([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
-  const [artists, setArtists] = useState<Artist[]>(ARTISTS);
+  const [searchablePins, setSearchablePins] = useState<Pin[]>([]);
+  const [searchablePinsLoading, setSearchablePinsLoading] = useState(true);
+  const [searchablePinsError, setSearchablePinsError] = useState<string | null>(null);
+  const [artists, setArtists] = useState<Artist[]>([]);
   const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
 
   // ─── Control de Pila de Navegación de Publicaciones ───
@@ -62,18 +65,11 @@ export default function App() {
   // La obra activa siempre es la última agregada a la pila
   const activePin = pinStack[pinStack.length - 1] || null;
 
-  const [boards, setBoards] = useState<Board[]>(
-    INITIAL_BOARDS.map((b) => ({ ...b, pins: [] }))
-  );
+  const [boards, setBoards] = useState<Board[]>([]);
 
-  // Mapa de artistas robusto que combina MySQL y los respaldos estáticos
+  // Los perfiles se obtienen exclusivamente desde MySQL.
   const artistMap = useMemo(() => {
-    const map: Record<string, any> = {};
-    // 1. Cargar artistas estáticos de respaldo ("a1", "a2", etc.)
-    ARTISTS.forEach((a) => {
-      map[a.id] = a;
-    });
-    // 2. Sobrescribir/agregar usuarios reales de la base de datos MySQL
+    const map: Record<string, Artist> = {};
     artists.forEach((a) => {
       map[a.id] = a;
       map[String(a.id)] = a;
@@ -81,42 +77,39 @@ export default function App() {
     return map;
   }, [artists]);
 
-  // Los perfiles y detalles aún pueden referenciar pines estáticos; los feeds usan solo la API.
-  const allPins = useMemo(() => {
-    const idsBd = new Set(feedPins.map((p) => p.id));
-    return [...feedPins, ...PINS.filter((p) => !idsBd.has(p.id))];
-  }, [feedPins]);
+  const allPins = feedPins;
 
   const filteredPins = useMemo(() => {
-    let pins = feedPins;
-    if (activeType !== "Todos") pins = pins.filter((p) => p.type === activeType);
+    let pins = search.trim() ? searchablePins : feedPins;
+    if (!search.trim() && activeType !== "Todos") pins = pins.filter((p) => p.type === activeType);
     if (search.trim()) {
       const q = search.toLowerCase();
       pins = pins.filter((p) => {
-        const artist = artistMap[p.artistId] || ARTISTS[0];
+        const artist = artistMap[p.artistId];
         return (
           p.title.toLowerCase().includes(q) ||
           p.type.toLowerCase().includes(q) ||
           p.tags.some((t) => t.toLowerCase().includes(q)) ||
           artist?.name.toLowerCase().includes(q) ||
-          artist?.handle.toLowerCase().includes(q)
+          artist?.handle.toLowerCase().includes(q) ||
+          `@${artist?.handle}`.toLowerCase().includes(q)
         );
       });
     }
     return pins;
-  }, [activeType, search, feedPins, artistMap]);
+  }, [activeType, search, feedPins, searchablePins, artistMap]);
 
   // Cargar lista de artistas desde MySQL
   useEffect(() => {
     fetch(`${API}/api/usuarios`)
       .then((res) => res.json())
       .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           const formattedArtists = data.map((u: any) => ({
             id: String(u.id),
             name: u.nombre,
             handle: u.handle.startsWith("@") ? u.handle.slice(1) : u.handle,
-            avatar: fullUrl(u.avatar) || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200",
+            avatar: fullUrl(u.avatar),
             bio: u.bio || "Sin descripción aún.",
             followers: Number(u.seguidores) || 0,
             following: Number(u.siguiendo) || 0,
@@ -127,6 +120,33 @@ export default function App() {
         }
       })
       .catch((err) => console.error("Error al obtener usuarios:", err));
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API}/api/feed`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Error HTTP ${res.status}`);
+        if (!Array.isArray(data)) throw new Error("La respuesta de publicaciones no es válida");
+        return data;
+      })
+      .then((data) => {
+        if (active) setSearchablePins(data.map(normalizarPinApi));
+      })
+      .catch((err) => {
+        console.error("Error al cargar publicaciones para búsqueda:", err);
+        if (active) setSearchablePinsError(
+          err instanceof Error ? err.message : "No se pudieron cargar las publicaciones"
+        );
+      })
+      .finally(() => {
+        if (active) setSearchablePinsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   // ─── Bloqueo del scroll en el fondo al abrir la modal de Guardar ───
@@ -157,8 +177,7 @@ export default function App() {
               id: String(b.tablero_id),
               name: b.tablero_nombre,
               pins: (b.pines || []).map((pin: any) => {
-                const matchedPin = PINS.find((p) => p.id === String(pin.id));
-                return matchedPin || normalizarPinApi(pin);
+                return normalizarPinApi(pin);
               }),
             }));
             setBoards(formattedBoards);
@@ -172,9 +191,6 @@ export default function App() {
         .then((data) => {
           if (Array.isArray(data)) {
             const formattedHistory: Pin[] = data.map((h: any) => {
-              const matchedPin = PINS.find((p) => p.id === String(h.publicacion_id));
-              if (matchedPin) return matchedPin;
-
               return {
                 id: String(h.publicacion_id),
                 title: h.titulo,
@@ -431,6 +447,7 @@ export default function App() {
   }
 
   function handleArtist(id: string) {
+    setSearch("");
     setProfileId(id);
     setView("profile");
   }
@@ -614,13 +631,21 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "#13191d", color: "#e8eef2" }}>
       <BarraNavegacion
         search={search}
-        onSearch={setSearch}
+        onSearch={(value) => {
+          setSearch(value);
+          if (value.trim()) {
+            setView("feed");
+            setPinStack([]);
+          }
+        }}
+        searchType={searchType}
+        onSearchType={setSearchType}
         view={view}
         onView={(v) => {
           setView(v);
           setSearch("");
           setPinStack([]);
-          if (v === "profile") setProfileId(user?.id || ME.id);
+          if (v === "profile") setProfileId(String(user.id));
         }}
         activeType={activeType}
         onType={setActiveType}
@@ -642,7 +667,7 @@ export default function App() {
           setDrawerOpen(false);
           setView(v);
           setPinStack([]);
-          if (v === "profile") setProfileId(user?.id || ME.id);
+          if (v === "profile") setProfileId(String(user.id));
         }}
         onArtists={() => {
           setDrawerOpen(false);
@@ -752,6 +777,10 @@ export default function App() {
           feedMode={feedMode}
           loading={feedLoading}
           error={feedError}
+          artists={artists}
+          searchType={searchType}
+          searchLoading={searchablePinsLoading}
+          searchError={searchablePinsError}
           artistMap={artistMap}
           onSave={(p) => setSavePins([p])}
           onArtist={handleArtist}

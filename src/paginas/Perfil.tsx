@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import type { Artist, Pin } from "../tipos";
-import { ARTISTS } from "../datos";
 import { formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
 import { ArrowLeft, Bookmark, UserRoundPlus, Pencil, X, Trash2, Upload } from "lucide-react";
@@ -11,7 +10,7 @@ interface PerfilProps {
   profileId: string | null;
   allPins: Pin[];
   currentUser: any;
-  artists?: Artist[];
+  artists: Artist[];
   onUpdateUser: (updatedData: any) => void;
   onBack: () => void;
   onSave: (pin: Pin) => void;
@@ -27,7 +26,7 @@ export function Perfil({
   profileId,
   allPins,
   currentUser,
-  artists = ARTISTS,
+  artists,
   onUpdateUser,
   onBack,
   onSave,
@@ -188,6 +187,15 @@ export function Perfil({
         headerBg: currentUser.headerBg || currentUser.header_bg || "linear-gradient(0deg, #13191d 5%, #00385a 100%)",
       }
     : artists.find((a) => String(a.id) === String(profileId)) || artists[0];
+
+  if (!artist) {
+    return (
+      <div role="status" style={{ textAlign: "center", padding: "72px 20px", color: "#7a909f" }}>
+        <p>Este artista no está disponible.</p>
+        <button type="button" onClick={onBack}>Volver</button>
+      </div>
+    );
+  }
 
   const pins = /^\d+$/.test(String(profileId))
     ? profilePins
