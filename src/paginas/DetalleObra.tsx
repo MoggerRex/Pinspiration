@@ -1,9 +1,11 @@
-import { createElement, useState, useEffect, useRef } from "react";
+import { createElement, useState, useEffect, useRef, useCallback } from "react";
+import type { ComponentType } from "react";
 import type { CSSProperties } from "react";
 import type { Pin, Artist } from "../tipos";
+import type { Render3DMode, VisorModelo3DProps } from "../componentes/VisorModelo3D";
 import { tagClass, formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
-import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2, Box } from "lucide-react";
+import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2, Settings2 } from "lucide-react";
 import { API, fullUrl } from "../api";
 import "./DetalleObra.css";
 
@@ -164,7 +166,14 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
   const [detalleModelo3d, setDetalleModelo3d] = useState(pin.model3d);
   const [mostrarModelo3d, setMostrarModelo3d] = useState(false);
   const [visor3dListo, setVisor3dListo] = useState(false);
+  const [VisorModelo3D, setVisorModelo3D] = useState<ComponentType<VisorModelo3DProps> | null>(null);
   const [errorVisor3d, setErrorVisor3d] = useState("");
+  const [inspectorAbierto, setInspectorAbierto] = useState(false);
+  const [wireframe, setWireframe] = useState(false);
+  const [wireframeColor, setWireframeColor] = useState("#a9bbff");
+  const [render3dMode, setRender3dMode] = useState<Render3DMode>("final");
+  const [modeloExpandido, setModeloExpandido] = useState(false);
+  const manejarErrorVisor3d = useCallback((mensaje: string) => setErrorVisor3d(mensaje), []);
 
   useEffect(() => {
     setArtistaApi(null);
@@ -176,6 +185,10 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
     setDetalleRecursos(pin.resources || []);
     setDetalleModelo3d(pin.model3d);
     setMostrarModelo3d(false);
+    setInspectorAbierto(false);
+    setWireframe(false);
+    setRender3dMode("final");
+    setModeloExpandido(false);
     if (!/^\d+$/.test(String(pin.id))) return;
 
     let activo = true;
@@ -222,9 +235,12 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
     if (!mostrarModelo3d || !detalleModelo3d) return;
     let activo = true;
     setErrorVisor3d("");
-    import("@google/model-viewer")
-      .then(() => {
-        if (activo) setVisor3dListo(true);
+    import("../componentes/VisorModelo3D")
+      .then((modulo) => {
+        if (activo) {
+          setVisorModelo3D(() => modulo.default);
+          setVisor3dListo(true);
+        }
       })
       .catch((error: unknown) => {
         console.error("No se pudo cargar el visor 3D:", error);
@@ -234,6 +250,15 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
       activo = false;
     };
   }, [mostrarModelo3d, detalleModelo3d]);
+
+  useEffect(() => {
+    if (!modeloExpandido) return;
+    const cerrarConEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setModeloExpandido(false);
+    };
+    document.addEventListener("keydown", cerrarConEscape);
+    return () => document.removeEventListener("keydown", cerrarConEscape);
+  }, [modeloExpandido]);
 
   const [lightbox, setLightbox] = useState(false);
   const [descModalOpen, setDescModalOpen] = useState(false);
@@ -541,83 +566,166 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
 
           {/* Visualizador de la Obra (Imagen / Carrusel) */}
           <div className="detalle-obra-visual" style={{ position: "sticky", top: 88, display: "flex", justifyContent: "center", alignItems: "flex-start" }}>
-            <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <div
+              className={`pin-detail-img-wrap${modeloExpandido ? " pin-detail-model-expanded" : ""}`}
+              style={{ borderRadius: 24, overflow: "hidden", background: "#1a2228", display: "inline-flex", position: "relative", maxWidth: "100%", cursor: mostrarModelo3d ? "default" : "zoom-in" }}
+              onClick={() => {
+                if (!mostrarModelo3d && !modeloExpandido) setLightbox(true);
+              }}
+            >
               {detalleModelo3d && (
-                <div style={{ display: "flex", gap: 8, marginBottom: 12, alignSelf: "flex-start" }}>
+                <div className="pin-detail-mode-switch" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
+                    className={!mostrarModelo3d ? "active" : ""}
                     aria-pressed={!mostrarModelo3d}
+                    aria-label={`Ver renders (${mediaList.length})`}
                     onClick={() => setMostrarModelo3d(false)}
-                    className="btn-secondary"
-                    style={{ padding: "7px 12px", fontSize: 13 }}
+                    title="Ver renders"
                   >
                     Renders ({mediaList.length})
                   </button>
                   <button
                     type="button"
+                    className={mostrarModelo3d ? "active" : ""}
                     aria-pressed={mostrarModelo3d}
-                    onClick={() => {
-                      setLightbox(false);
-                      setMostrarModelo3d(true);
-                    }}
-                    className="btn-secondary"
-                    style={{
-                      padding: "7px 12px",
-                      fontSize: 13,
-                      borderColor: mostrarModelo3d ? "#688bfb" : undefined,
-                      color: mostrarModelo3d ? "#a9bbff" : undefined,
-                    }}
+                    onClick={() => setMostrarModelo3d(true)}
+                    title="Ver modelo 3D"
                   >
-                    Ver modelo 3D
+                    Modelo 3D
                   </button>
                 </div>
               )}
 
-              {mostrarModelo3d && detalleModelo3d ? (
-                <div
-                  style={{
-                    width: "100%",
-                    height: "min(70vh, 640px)",
-                    minHeight: 360,
-                    overflow: "hidden",
-                    borderRadius: 24,
-                    border: "1px solid #242f38",
-                    background: "#1a2228",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
+              <img
+                src={currentMediaUrl.replace(/w=\d+(&h=\d+)?(&fit=crop)?/, "w=1200")}
+                alt={pin.title}
+                style={{
+                  display: "block",
+                  width: "auto",
+                  height: "auto",
+                  maxWidth: "100%",
+                  maxHeight: "calc(100vh - 112px)",
+                  objectFit: "contain",
+                  visibility: mostrarModelo3d && detalleModelo3d ? "hidden" : "visible",
+                }}
+              />
+
+              {mostrarModelo3d && detalleModelo3d && (
+                <div className="pin-detail-model-frame">
                   {errorVisor3d ? (
                     <p role="alert" style={{ color: "#ff8080", padding: 24, textAlign: "center" }}>{errorVisor3d}</p>
-                  ) : visor3dListo ? (
-                    createElement("model-viewer", {
+                  ) : visor3dListo && VisorModelo3D ? (
+                    createElement(VisorModelo3D, {
                       src: detalleModelo3d.url,
-                      poster: currentMediaUrl,
-                      alt: `Vista 3D de ${pin.title}`,
-                      "camera-controls": true,
-                      "auto-rotate": true,
-                      "interaction-prompt": "auto",
-                      "environment-image": "neutral",
-                      "shadow-intensity": "1",
-                      "tone-mapping": "neutral",
-                      style: { width: "100%", height: "100%", backgroundColor: "#1a2228" },
+                      wireframe,
+                      wireframeColor,
+                      renderMode: render3dMode,
+                      onError: manejarErrorVisor3d,
                     })
                   ) : (
                     <span style={{ color: "#7a909f", fontSize: 14 }}>Cargando vista 3D…</span>
                   )}
                 </div>
-              ) : (
-            <div
-              className="pin-detail-img-wrap"
-              style={{ borderRadius: 24, overflow: "hidden", background: "#1a2228", display: "inline-flex", position: "relative", cursor: "zoom-in" }}
-              onClick={() => setLightbox(true)}
-            >
-              <img
-                src={currentMediaUrl.replace(/w=\d+(&h=\d+)?(&fit=crop)?/, "w=1200")}
-                alt={pin.title}
-                style={{ display: "block", width: "auto", height: "auto", maxWidth: "100%", maxHeight: "calc(100vh - 112px)", objectFit: "contain" }}
-              />
+              )}
+
+              {mostrarModelo3d && detalleModelo3d && (
+                <>
+                  <button
+                    type="button"
+                    className="pin-detail-inspector-toggle"
+                    aria-expanded={inspectorAbierto}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setInspectorAbierto((abierto) => !abierto);
+                    }}
+                  >
+                    <Settings2 size={16} />
+                    Inspector
+                  </button>
+
+                  {inspectorAbierto && (
+                    <aside
+                      className="pin-detail-inspector"
+                      aria-label="Inspector de modelo 3D"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <div className="pin-detail-inspector-header">
+                        <strong>Model Inspector</strong>
+                        <button
+                          type="button"
+                          aria-label="Cerrar inspector"
+                          onClick={() => setInspectorAbierto(false)}
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+
+                      <section>
+                        <span className="pin-detail-inspector-label">GEOMETRÍA</span>
+                        <button
+                          type="button"
+                          className={`pin-detail-inspector-option${wireframe ? " active" : ""}`}
+                          aria-pressed={wireframe}
+                          onClick={() => setWireframe((activo) => !activo)}
+                        >
+                          <span className="pin-detail-wireframe-icon" />
+                          Wireframe
+                          <span className="pin-detail-inspector-status">{wireframe ? "ON" : "OFF"}</span>
+                        </button>
+                        {wireframe && (
+                          <div className="pin-detail-wireframe-colors" aria-label="Color de wireframe">
+                            {["#ffffff", "#111111", "#9ca3af", "#ef4444", "#2563eb", "#22c55e", "#facc15"].map((color) => (
+                              <button
+                                key={color}
+                                type="button"
+                                aria-label={`Color ${color}`}
+                                aria-pressed={wireframeColor === color}
+                                title={color}
+                                style={{ backgroundColor: color }}
+                                className={wireframeColor === color ? "active" : ""}
+                                onClick={() => setWireframeColor(color)}
+                              />
+                            ))}
+                            <label className="pin-detail-custom-color" title="Elegir color personalizado">
+                              <span style={{ backgroundColor: wireframeColor }} />
+                              <input
+                                type="color"
+                                aria-label="Color personalizado del wireframe"
+                                value={wireframeColor}
+                                onChange={(event) => setWireframeColor(event.target.value)}
+                              />
+                            </label>
+                          </div>
+                        )}
+                      </section>
+
+                      <section>
+                        <span className="pin-detail-inspector-label">RENDER</span>
+                        <button
+                          type="button"
+                          className={`pin-detail-inspector-option${render3dMode === "final" ? " active" : ""}`}
+                          aria-pressed={render3dMode === "final"}
+                          onClick={() => setRender3dMode("final")}
+                        >
+                          ◉ Final render
+                        </button>
+                        <button
+                          type="button"
+                          className={`pin-detail-inspector-option${render3dMode === "no-post-processing" ? " active" : ""}`}
+                          aria-pressed={render3dMode === "no-post-processing"}
+                          onClick={() => setRender3dMode("no-post-processing")}
+                        >
+                          ◉ No post-processing
+                        </button>
+                      </section>
+                      <p className="pin-detail-inspector-note">
+                        “No post-processing” muestra el modelo sin el tone mapping del render final.
+                      </p>
+                    </aside>
+                  )}
+                </>
+              )}
 
               {/* Indicador de posición si hay más de 1 medio */}
               {mediaList.length > 1 && (
@@ -709,18 +817,33 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                 </>
               )}
 
-              <div className="pin-detail-expand-btn" style={{
-                position: "absolute", bottom: 14, right: 14,
-                background: "rgba(19,25,29,0.88)", backdropFilter: "blur(6px)",
-                border: "1px solid rgba(255,255,255,0.12)", borderRadius: 20,
-                padding: "7px 14px", color: "#e8eef2", fontFamily: "'DM Sans', sans-serif",
-                fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6,
-                opacity: 0, transition: "opacity 0.2s ease", pointerEvents: "none",
-              }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-                Ampliar imagen
-              </div>
-            </div>
+              <button
+                type="button"
+                className="pin-detail-expand-btn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (mostrarModelo3d && detalleModelo3d) {
+                    setModeloExpandido((expandido) => !expandido);
+                  } else {
+                    setLightbox(true);
+                  }
+                }}
+              >
+                <Maximize2 size={14} />
+                {mostrarModelo3d ? (modeloExpandido ? "Salir de pantalla completa" : "Ampliar modelo") : "Ampliar imagen"}
+              </button>
+              {modeloExpandido && (
+                <button
+                  type="button"
+                  className="pin-detail-model-close"
+                  aria-label="Salir de pantalla completa"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setModeloExpandido(false);
+                  }}
+                >
+                  <X size={20} />
+                </button>
               )}
             </div>
           </div>
@@ -867,23 +990,20 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                     </button>
                   ))}
 
-                  <div style={{ width: 1, height: 22, background: "#242f38", borderRadius: 1, flexShrink: 0 }} />
+                  {(!detalleModelo3d || detalleRecursos.length > 0) && (
+                    <div style={{ width: 1, height: 22, background: "#242f38", borderRadius: 1, flexShrink: 0 }} />
+                  )}
 
-                  <div style={{ flexShrink: 0 }}>
+                  {(detalleRecursos.length > 0 || !detalleModelo3d) && <div style={{ flexShrink: 0 }}>
                     {detalleRecursos.length > 0 ? (
                       <ResourcesPill resources={detalleRecursos} />
-                    ) : detalleModelo3d ? (
-                      <span style={{ fontSize: 12, color: "#a9bbff", background: "#1d273a", border: "1px solid #2b3b59", borderRadius: 20, padding: "3px 12px", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
-                        <Box size={12} />
-                        Vista 3D incluida
-                      </span>
                     ) : (
                       <span style={{ fontSize: 12, color: "#4a5e6a", background: "#13191d", border: "1px solid #1f2a32", borderRadius: 20, padding: "3px 12px", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                         Sin recurso
                       </span>
                     )}
-                  </div>
+                  </div>}
                 </div>
               );
             })()}
