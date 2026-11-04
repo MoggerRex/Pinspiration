@@ -432,26 +432,34 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
                   <Item>
                     <form onSubmit={handleRegisterSubmit}>
                       <input
+                        type="email"
+                        placeholder="Correo electrónico (ej. ana@correo.com)"
+                        aria-label="Correo electrónico"
+                        autoComplete="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                      />
+                      <input
                         type="text"
-                        placeholder="Nombre de creador"
+                        placeholder="Nombre de creador (ej. Ana López)"
+                        aria-label="Nombre de creador"
+                        autoComplete="name"
                         value={nombre}
                         onChange={(e) => setNombre(e.target.value)}
                       />
                       <input
                         type="text"
-                        placeholder="Handle (@usuario)"
+                        placeholder="Nombre de usuario (ej. ana_crea)"
+                        aria-label="Nombre de usuario"
+                        autoComplete="username"
                         value={handle}
                         onChange={(e) => setHandle(e.target.value)}
                       />
                       <input
-                        type="email"
-                        placeholder="Correo electrónico"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                      />
-                      <input
                         type="password"
-                        placeholder="Contraseña"
+                        placeholder="Contraseña (ej. MiClave123)"
+                        aria-label="Contraseña"
+                        autoComplete="new-password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                       />
@@ -534,20 +542,25 @@ const handleLoginSubmit = async (e: React.FormEvent) => {
 
                 {error && <ErrorMessage message={error} />}
 
-                <div className="avatar-preview-box">
-                  {avatar ? (
-                    <img src={avatar} alt="Preview" className="avatar-preview-img" />
-                  ) : (
-                    <div className="avatar-placeholder">
-                      {tempUser?.nombre?.charAt(0).toUpperCase() || 'P'}
-                    </div>
-                  )}
-                </div>
-
-                <div className="form-group" style={{ marginBottom: 16 }}>
-                  <label style={{ fontSize: 13, color: '#7a909f', fontWeight: 500 }}>Sube una imagen</label>
-                  <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleAvatarFile} style={{ marginTop: 4, color: '#e8eef2', fontSize: 13 }} />
-                </div>
+                <label className="avatar-upload-control">
+                  <input
+                    className="avatar-file-input"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    aria-label="Elegir foto de perfil"
+                    onChange={handleAvatarFile}
+                  />
+                  <span className="avatar-preview-box">
+                    {avatar ? (
+                      <img src={avatar} alt="" className="avatar-preview-img" />
+                    ) : (
+                      <span className="avatar-placeholder">
+                        {tempUser?.nombre?.charAt(0).toUpperCase() || 'P'}
+                      </span>
+                    )}
+                  </span>
+                  <span className="avatar-upload-label">Elegir foto</span>
+                </label>
 
                 <div className="form-group" style={{ marginBottom: 20 }}>
                   <label style={{ fontSize: 13, color: '#7a909f', fontWeight: 500 }}>O pega la URL de una imagen</label>

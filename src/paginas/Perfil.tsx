@@ -750,7 +750,7 @@ export function Perfil({
                         }}
                       >
                         <Upload size={14} />
-                        <span>Subir imagen</span>
+                        <span>Editar foto</span>
                         <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleAvatarFile} style={{ display: "none" }} />
                       </label>
                     </div>

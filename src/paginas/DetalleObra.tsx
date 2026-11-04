@@ -5,7 +5,7 @@ import type { Pin, Artist } from "../tipos";
 import type { Render3DMode, VisorModelo3DProps } from "../componentes/VisorModelo3D";
 import { tagClass, formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
-import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2, Settings2 } from "lucide-react";
+import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2, Settings2, Box, Images } from "lucide-react";
 import { API, fullUrl } from "../api";
 import "./DetalleObra.css";
 
@@ -251,18 +251,23 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
     };
   }, [mostrarModelo3d, detalleModelo3d]);
 
-  useEffect(() => {
-    if (!modeloExpandido) return;
-    const cerrarConEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setModeloExpandido(false);
-    };
-    document.addEventListener("keydown", cerrarConEscape);
-    return () => document.removeEventListener("keydown", cerrarConEscape);
-  }, [modeloExpandido]);
-
   const [lightbox, setLightbox] = useState(false);
   const [descModalOpen, setDescModalOpen] = useState(false);
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (!modeloExpandido && !lightbox) return;
+    const cerrarConEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (lightbox) {
+        setLightbox(false);
+      } else {
+        setModeloExpandido(false);
+      }
+    };
+    document.addEventListener("keydown", cerrarConEscape);
+    return () => document.removeEventListener("keydown", cerrarConEscape);
+  }, [lightbox, modeloExpandido]);
 
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentInput, setCommentInput] = useState("");
@@ -333,6 +338,25 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
   useEffect(() => {
     setActiveMediaIdx(0);
   }, [pin.id]);
+
+  useEffect(() => {
+    if (mediaList.length < 2 || mostrarModelo3d || modeloExpandido || descModalOpen || commentsModalOpen) return;
+
+    const navegarCarrusel = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
+
+      let direction = 0;
+      if (event.key === "ArrowLeft" || event.key === "ArrowUp") direction = -1;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") direction = 1;
+      if (direction === 0) return;
+
+      event.preventDefault();
+      setActiveMediaIdx((index) => Math.max(0, Math.min(mediaList.length - 1, index + direction)));
+    };
+
+    document.addEventListener("keydown", navegarCarrusel);
+    return () => document.removeEventListener("keydown", navegarCarrusel);
+  }, [commentsModalOpen, descModalOpen, mediaList.length, modeloExpandido, mostrarModelo3d]);
 
   useEffect(() => {
     setVisor3dListo(false);
@@ -565,7 +589,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
         <div className="detalle-obra-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40, alignItems: "start" }}>
 
           {/* Visualizador de la Obra (Imagen / Carrusel) */}
-          <div className="detalle-obra-visual" style={{ position: "sticky", top: 88, display: "flex", justifyContent: "center", alignItems: "flex-start" }}>
+          <div className="detalle-obra-visual" style={{ position: "sticky", top: 88, zIndex: modeloExpandido ? 300 : undefined, display: "flex", justifyContent: "center", alignItems: "flex-start" }}>
             <div
               className={`pin-detail-img-wrap${modeloExpandido ? " pin-detail-model-expanded" : ""}`}
               style={{ borderRadius: 24, overflow: "hidden", background: "#1a2228", display: "inline-flex", position: "relative", maxWidth: "100%", cursor: mostrarModelo3d ? "default" : "zoom-in" }}
@@ -573,7 +597,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                 if (!mostrarModelo3d && !modeloExpandido) setLightbox(true);
               }}
             >
-              {detalleModelo3d && (
+              {detalleModelo3d && !modeloExpandido && (
                 <div className="pin-detail-mode-switch" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
@@ -583,6 +607,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                     onClick={() => setMostrarModelo3d(false)}
                     title="Ver renders"
                   >
+                    <Images size={15} aria-hidden="true" />
                     Renders ({mediaList.length})
                   </button>
                   <button
@@ -592,6 +617,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                     onClick={() => setMostrarModelo3d(true)}
                     title="Ver modelo 3D"
                   >
+                    <Box size={15} aria-hidden="true" />
                     Modelo 3D
                   </button>
                 </div>
@@ -832,14 +858,18 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                 <Maximize2 size={14} />
                 {mostrarModelo3d ? (modeloExpandido ? "Salir de pantalla completa" : "Ampliar modelo") : "Ampliar imagen"}
               </button>
-              {modeloExpandido && (
+              {mostrarModelo3d && detalleModelo3d && (
                 <button
                   type="button"
                   className="pin-detail-model-close"
-                  aria-label="Salir de pantalla completa"
+                  aria-label={modeloExpandido ? "Salir de pantalla completa" : "Volver a los renders"}
                   onClick={(event) => {
                     event.stopPropagation();
-                    setModeloExpandido(false);
+                    if (modeloExpandido) {
+                      setModeloExpandido(false);
+                    } else {
+                      setMostrarModelo3d(false);
+                    }
                   }}
                 >
                   <X size={20} />

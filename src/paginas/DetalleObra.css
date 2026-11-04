@@ -30,6 +30,10 @@
 }
 
 .pin-detail-mode-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 7px 10px;
