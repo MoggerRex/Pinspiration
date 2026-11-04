@@ -368,6 +368,7 @@ const CATEGORIAS = ['2D', '3D', 'Fotografía', 'Edición'];
 const MAX_UPLOAD_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_UPLOAD_RESOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_MODEL_BYTES = 50 * 1024 * 1024;
+
 const uploadStorage = {
   _handleFile: (req, file, callback) => {
     const nombre = crypto.randomBytes(16).toString('hex');
@@ -1328,7 +1329,12 @@ app.get('/api/publicaciones/:id', async (req, res) => {
         tags: etiquetas.map((e) => e.nombre),
         resources: recursos
           .filter((recurso) => recurso.tipo_mime !== 'model/gltf-binary')
-          .map((x) => ({ name: x.nombre, url: `/api/recursos/${x.id}` })),
+          .map((x) => ({
+            name: x.nombre,
+            url: `/api/recursos/${x.id}`,
+            extension: path.extname(x.url_archivo).toLowerCase(),
+            tipoMime: x.tipo_mime,
+          })),
         model3d: modelo3d
           ? { name: modelo3d.nombre, url: `/api/recursos/${modelo3d.id}?preview=1` }
           : undefined,
@@ -1649,7 +1655,7 @@ app.post('/api/publicaciones', upload.fields([
 
     if (archivoRecurso || recurso) {
       const recursoGuardadoInfo = archivoRecurso
-        ? await guardarRecursoArchivo(archivoRecurso, req.body.recurso_nombre)
+        ? await guardarRecursoArchivo(archivoRecurso, archivoRecurso.originalname)
         : await guardarRecursoDataUrl(recurso.data, recurso.nombre);
       archivosSubidos.push(recursoGuardadoInfo.url);
       recursoGuardado = {
@@ -1719,7 +1725,12 @@ app.post('/api/publicaciones', upload.fields([
       id: String(publicacionId),
       medios: rutas,
       resources: recursoGuardado
-        ? [{ name: recursoGuardado.nombre, url: `/api/recursos/${recursoGuardado.id}` }]
+        ? [{
+            name: recursoGuardado.nombre,
+            url: `/api/recursos/${recursoGuardado.id}`,
+            extension: path.extname(recursoGuardado.url).toLowerCase(),
+            tipoMime: recursoGuardado.tipoMime,
+          }]
         : [],
       model3d: modelo3dGuardado
         ? { name: modelo3dGuardado.nombre, url: `/api/recursos/${modelo3dGuardado.id}?preview=1` }
@@ -1756,7 +1767,7 @@ app.use((err, _req, res, next) => {
       : 'La carga excede los límites permitidos';
     return res.status(400).json({ error });
   }
-  if (/^Formato de imagen|^Formato de modelo|^Campo de archivo/.test(err.message || '')) {
+  if (/^Formato de imagen|^Formato de modelo|^Formato de recurso|^Campo de archivo/.test(err.message || '')) {
     return res.status(400).json({ error: err.message });
   }
   console.error('Error al procesar la carga:', err);

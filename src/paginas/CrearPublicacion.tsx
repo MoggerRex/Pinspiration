@@ -17,6 +17,22 @@ interface CrearPublicacionProps {
   currentUser: any;
 }
 
+function agruparImagenesRechazadas(rechazadas: { imagen: number; razon: string }[]) {
+  const grupos = new Map<string, number[]>();
+  for (const { imagen, razon } of rechazadas) {
+    grupos.set(razon, [...(grupos.get(razon) || []), imagen]);
+  }
+  return [...grupos].map(([razon, imagenes]) => {
+    const numeracion = imagenes.length > 1
+      ? `${imagenes.slice(0, -1).join(", ")} y ${imagenes[imagenes.length - 1]}`
+      : String(imagenes[0]);
+    return {
+      texto: `${imagenes.length > 1 ? "Imágenes" : "Imagen"} ${numeracion}`,
+      razon,
+    };
+  });
+}
+
 export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublicacionProps) {
   const [step, setStep] = useState<CrearStep>("upload");
   const [mediaList, setMediaList] = useState<string[]>([]);
@@ -42,6 +58,12 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   const [resourceFile, setResourceFile] = useState<File | null>(null);
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [modelError, setModelError] = useState("");
+  const [resourceScanLoading, setResourceScanLoading] = useState(false);
+  const [resourceScanError, setResourceScanError] = useState("");
+  const [resourceReviewResult, setResourceReviewResult] = useState<{
+    message: string;
+    advertencia?: string;
+  } | null>(null);
 
   useEffect(() => () => {
     mediaObjectUrls.current.forEach((url) => URL.revokeObjectURL(url));
@@ -53,8 +75,16 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
   // Estados para la validación con la IA
   const [aiProgress, setAiProgress] = useState(0);
-  const [aiResult, setAiResult] = useState<{ aprobado: boolean; razon: string; categoria: string } | null>(null);
+  const [aiResult, setAiResult] = useState<{
+    aprobado: boolean;
+    razon: string;
+    categoria: string;
+    etiquetas: string[];
+    rechazadas: { imagen: number; razon: string }[];
+  } | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiCurrentImage, setAiCurrentImage] = useState(0);
+  const [aiAttempt, setAiAttempt] = useState(0);
 
   // Estados EXIF para Fotografía
   const [exifCamera, setExifCamera] = useState("");
@@ -109,6 +139,8 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
   function handleModelFile(file?: File) {
     if (!file) return;
+    setResourceScanError("");
+    setResourceReviewResult(null);
     if (!file.name.toLowerCase().endsWith(".glb")) {
       setModelFile(null);
       setModelError("La vista previa interactiva acepta únicamente archivos .glb.");
@@ -121,6 +153,19 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     }
     setModelError("");
     setModelFile(file);
+  }
+
+  function handleResourceFile(file?: File) {
+    if (!file) return;
+    setResourceScanError("");
+    setResourceReviewResult(null);
+    if (file.size === 0 || file.size > 50 * 1024 * 1024) {
+      setResourceScanError("El recurso debe pesar más de 0 y hasta 50 MB.");
+      setResourceFile(null);
+      return;
+    }
+    setResourceFile(file);
+    if (!resourceName) setResourceName(file.name);
   }
 
   function removeMedia(index: number) {
@@ -172,85 +217,288 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
   // Validación real con Gemini API
   useEffect(() => {
-    const mainImg = mediaList[0];
-    const mainFile = mediaFiles[0];
-    if (step !== "ai" || !mainImg || !mainFile) return;
+    if (step !== "ai" || mediaFiles.length === 0) return;
 
     setAiProgress(0);
+    setAiCurrentImage(1);
     setAiResult(null);
     setAiError(null);
 
-    let p = 0;
-    const iv = setInterval(() => {
-      p += Math.random() * 10;
-      if (p >= 90) p = 90;
-      setAiProgress(p);
-    }, 200);
+    let activo = true;
 
     async function validarImagen() {
       try {
         const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash-lite" });
-        const bytes = new Uint8Array(await mainFile.arrayBuffer());
-        let binary = "";
-        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-        }
-        const base64Data = btoa(binary);
-        const mimeType = mainFile.type;
-
-        const prompt = `
-          Actúa como un estricto moderador de contenido para "Pinspiration", una plataforma profesional para artistas visuales.
-          Analiza cuidadosamente la imagen adjunta. 
-          
-          ESTÁNDARES PERMITIDOS:
-          - Fotografía normal o profesional.
-          - Edición fotográfica profesional.
-          - Arte 2D (ilustraciones, dibujos, pintura digital y arte tradicional).
-          - Arte 3D (renders, modelado, landscapes, unreal).
-
-          CONTENIDO ESTRICTAMENTE PROHIBIDO (RECHAZO INMEDIATO):
-          - Memes o "shitposting".
-          - Capturas de pantalla de texto, código o chats.
-          - Contenido racista, discursos de odio o símbolos de odio.
-          - Violencia gráfica explícita, gore o autolesiones.
-          - Contenido sexualmente explícito o pornografía.
-
-          Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura, sin texto adicional ni formato markdown:
-          {
-            "aprobado": true o false,
-            "categoria": "2D" | "3D" | "Fotografía" | "Edición" | "Rechazado",
-            "razon": "Una breve explicación de máximo 15 palabras del por qué fue aprobado o rechazado"
+        const resultados: { imagen: number; aprobado: boolean; razon: string }[] = [];
+        let categoriaPortada = "";
+        let etiquetasPortada: string[] = [];
+        for (let indice = 0; indice < mediaFiles.length; indice += 1) {
+          if (!activo) return;
+          const archivo = mediaFiles[indice];
+          setAiCurrentImage(indice + 1);
+          const bytes = new Uint8Array(await archivo.arrayBuffer());
+          let binary = "";
+          for (let byteOffset = 0; byteOffset < bytes.length; byteOffset += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(byteOffset, byteOffset + 0x8000));
           }
-        `;
+          const esPortada = indice === 0;
+          const prompt = `
+            Eres moderador de contenido de "Pinspiration", una plataforma profesional para artistas visuales.
+            Analiza únicamente la imagen adjunta, que corresponde a la imagen ${indice + 1} de ${mediaFiles.length} de una publicación. Decide por el contenido visible de esta imagen, incluyendo texto, símbolos y contexto. No presupongas que una imagen cumple por ser ilustración, edición o arte.
 
-        const result = await model.generateContent([
-          prompt,
-          { inlineData: { data: base64Data, mimeType } }
-        ]);
+            CONTENIDO PERMITIDO:
+            - Fotografía normal o profesional, edición fotográfica, arte 2D y arte 3D.
 
-        const responseText = result.response.text();
-        const cleanJson = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
-        const analisis = JSON.parse(cleanJson);
+            RECHAZA esta imagen si contiene:
+            - Memes o shitposting, incluyendo plantillas reconocibles, imágenes de reacción y contenido humorístico descontextualizado, aunque tenga buena calidad, sea una ilustración o no incluya texto.
+            - Capturas de pantalla de texto, código o chats.
+            - Contenido racista, discursos o símbolos de odio.
+            - Violencia gráfica explícita, gore o autolesiones.
+            - Contenido sexualmente explícito o pornografía.
 
-        clearInterval(iv);
+            Revisa activamente si se infringe cualquiera de las reglas; no apruebes por defecto ni omitas infracciones porque la imagen también tenga elementos artísticos. Devuelve ÚNICAMENTE JSON válido, sin markdown, con "imagen" igual a ${indice + 1}, "aprobado" booleano y "razon" breve en español. Si la imagen cumple, usa una razón vacía. Si no cumple, explica con claridad qué estándar infringe.
+            ${esPortada ? `Como esta es la portada, incluye también "categoria" ("2D", "3D", "Fotografía" o "Edición") y exactamente tres "etiquetas" descriptivas en español, distintas entre sí, de máximo 50 caracteres y sin #.` : `No incluyas categoría ni etiquetas; estas solo se generan a partir de la portada.`}
+            Formato JSON: ${esPortada
+              ? `{"imagen": ${indice + 1}, "aprobado": true, "razon": "", "categoria": "2D", "etiquetas": ["acuarela", "paisaje", "naturaleza"]}`
+              : `{"imagen": ${indice + 1}, "aprobado": true, "razon": ""}`}
+          `;
+
+          let analisis: {
+            imagen?: unknown;
+            aprobado?: unknown;
+            razon?: unknown;
+            categoria?: unknown;
+            etiquetas?: unknown;
+          } | null = null;
+          let ultimoError: unknown;
+
+          for (let intento = 0; intento < 3; intento += 1) {
+            try {
+              const result = await model.generateContent([
+                prompt,
+                { inlineData: { data: btoa(binary), mimeType: archivo.type } },
+              ]);
+              const responseText = result.response.text();
+              const cleanJson = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+              const respuesta: unknown = JSON.parse(cleanJson);
+              if (!respuesta || typeof respuesta !== "object") {
+                throw new Error("La IA devolvió una respuesta inválida.");
+              }
+              const respuestaObjeto = respuesta as {
+                imagen?: unknown;
+                aprobado?: unknown;
+                razon?: unknown;
+                categoria?: unknown;
+                etiquetas?: unknown;
+              };
+              if (
+                respuestaObjeto?.imagen !== indice + 1 ||
+                typeof respuestaObjeto.aprobado !== "boolean" ||
+                (respuestaObjeto.razon !== undefined && typeof respuestaObjeto.razon !== "string")
+              ) {
+                throw new Error(`La IA no devolvió una decisión válida para la imagen ${indice + 1}.`);
+              }
+              if (!respuestaObjeto.aprobado && !String(respuestaObjeto.razon || "").trim()) {
+                throw new Error(`La IA rechazó la imagen ${indice + 1} sin explicar el motivo.`);
+              }
+              if (
+                esPortada &&
+                (typeof respuestaObjeto.categoria !== "string" || !Array.isArray(respuestaObjeto.etiquetas))
+              ) {
+                throw new Error("La IA no devolvió la categoría y las etiquetas de la portada.");
+              }
+              analisis = respuestaObjeto;
+              break;
+            } catch (error) {
+              ultimoError = error;
+              if (intento < 2) await new Promise((resolve) => setTimeout(resolve, 800 * (intento + 1)));
+            }
+          }
+
+          if (!analisis) {
+            const detalle = ultimoError instanceof Error ? ` ${ultimoError.message}` : "";
+            throw new Error(`No se pudo analizar la imagen ${indice + 1} tras 3 intentos.${detalle}`);
+          }
+
+          resultados.push({
+            imagen: indice + 1,
+            aprobado: analisis.aprobado === true,
+            razon: typeof analisis.razon === "string" ? analisis.razon.trim() : "",
+          });
+
+          if (esPortada) {
+            categoriaPortada = typeof analisis.categoria === "string" ? analisis.categoria : "";
+            const etiquetasUnicas = new Map<string, string>();
+            const etiquetasAnalizadas = analisis.etiquetas;
+            if (Array.isArray(etiquetasAnalizadas)) {
+              for (const valor of etiquetasAnalizadas) {
+                if (typeof valor !== "string") continue;
+                const etiqueta = valor.trim().replace(/^#+/, "").slice(0, 50);
+                if (etiqueta && !etiquetasUnicas.has(etiqueta.toLocaleLowerCase())) {
+                  etiquetasUnicas.set(etiqueta.toLocaleLowerCase(), etiqueta);
+                }
+              }
+            }
+            etiquetasPortada = [...etiquetasUnicas.values()].slice(0, 3);
+          }
+          if (activo) setAiProgress(Math.round(((indice + 1) / mediaFiles.length) * 95));
+        }
+
+        const rechazadas = resultados
+          .filter((resultado) => !resultado.aprobado)
+          .map(({ imagen, razon }) => ({ imagen, razon }))
+          .sort((a, b) => a.imagen - b.imagen);
+        const aprobada = rechazadas.length === 0;
+        if (aprobada && etiquetasPortada.length !== 3) {
+          throw new Error("La IA no devolvió tres etiquetas válidas para la portada.");
+        }
+
+        if (!activo) return;
         setAiProgress(100);
-        setAiResult(analisis);
+        setAiResult({
+          aprobado: aprobada,
+          razon: aprobada ? "Todas las imágenes cumplen las pautas." : "Una o más imágenes no cumplen las pautas.",
+          categoria: categoriaPortada,
+          etiquetas: etiquetasPortada,
+          rechazadas,
+        });
 
-        if (analisis.aprobado) {
-          setCategory(analisis.categoria !== "Rechazado" ? (analisis.categoria as PinType) : "2D");
+        if (aprobada) {
+          setCategory((["2D", "3D", "Fotografía", "Edición"] as string[]).includes(categoriaPortada)
+            ? (categoriaPortada as PinType)
+            : "2D");
         }
 
       } catch (error) {
-        console.error("Error exacto de Gemini:", error);
-        clearInterval(iv);
-        setAiError("Hubo un problema de conexión con los servidores de validación.");
+        console.error("Error al analizar las imágenes con Gemini:", error);
+        if (activo) {
+          setAiError(error instanceof Error
+            ? error.message
+            : "No se pudo completar el análisis. Verifica la conexión e inténtalo de nuevo.");
+        }
       }
     }
 
     validarImagen();
 
-    return () => clearInterval(iv);
-  }, [step, mediaList, mediaFiles]);
+    return () => {
+      activo = false;
+    };
+  }, [step, mediaFiles, aiAttempt]);
+
+  async function convertirBase64(blob: Blob) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    return btoa(binary);
+  }
+
+  async function moderarContenidoVisual(
+    imagenes: { blob: Blob; etiqueta: string }[],
+    nombreArchivo: string,
+  ) {
+    const modelo = genAI.getGenerativeModel({ model: "gemini-3.5-flash-lite" });
+    const partes: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [{
+      text: `
+        Modera el contenido visual adjunto para la plataforma de arte Pinspiration.
+        Revisa por separado todas las imágenes adjuntas, que son ${imagenes.map((imagen) => imagen.etiqueta).join(", ")} del archivo "${nombreArchivo}".
+        El arte visual, fotografía y modelos artísticos son permitidos.
+        Rechaza si cualquiera de las vistas muestra pornografía o contenido sexual explícito, odio o racismo, símbolos de odio, violencia gráfica/gore/autolesiones, o contenido prohibido de forma clara por las normas de la plataforma.
+        No rechaces por desnudez no sexual o contexto artístico no explícito. No apruebes por defecto: inspecciona cada imagen.
+        Devuelve únicamente JSON válido sin markdown: {"aprobado": true, "razon": ""}.
+        Si alguna imagen infringe las normas, usa aprobado=false y describe brevemente cuál vista y el motivo en español.
+      `,
+    }];
+
+    for (const imagen of imagenes) {
+      partes.push({ text: `${imagen.etiqueta}:` });
+      partes.push({
+        inlineData: {
+          data: await convertirBase64(imagen.blob),
+          mimeType: imagen.blob.type || "image/jpeg",
+        },
+      });
+    }
+
+    const respuesta = await modelo.generateContent(partes);
+    const texto = respuesta.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+    const resultado: unknown = JSON.parse(texto);
+    if (!resultado || typeof resultado !== "object") {
+      throw new Error(`La IA devolvió una respuesta inválida al moderar "${nombreArchivo}".`);
+    }
+    const decision = resultado as { aprobado?: unknown; razon?: unknown };
+    if (typeof decision.aprobado !== "boolean" || typeof decision.razon !== "string") {
+      throw new Error(`La IA no devolvió una decisión válida para "${nombreArchivo}".`);
+    }
+    if (!decision.aprobado) {
+      throw new Error(`La IA rechazó "${nombreArchivo}": ${decision.razon || "contenido no permitido"}`);
+    }
+  }
+
+  async function revisarRecursosVisuales() {
+    const archivosRevisados: string[] = [];
+    let recursoNoVisual = false;
+    const extensionImagen = resourceFile?.name.toLowerCase().match(/\.[^.]+$/)?.[0];
+    const tiposImagen: Record<string, string> = {
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".png": "image/png",
+      ".webp": "image/webp",
+      ".gif": "image/gif",
+    };
+    if (resourceFile && extensionImagen && tiposImagen[extensionImagen]) {
+      await moderarContenidoVisual(
+        [{
+          blob: await optimizarImagen(resourceFile, 1024),
+          etiqueta: "Imagen del recurso",
+        }],
+        resourceFile.name,
+      );
+      archivosRevisados.push(resourceFile.name);
+    } else if (resourceFile) {
+      recursoNoVisual = true;
+    }
+    if (modelFile) {
+      const { crearVistasModeracionModelo } = await import("../utilidadesModeracionModelo");
+      const vistas = await crearVistasModeracionModelo(modelFile);
+      await moderarContenidoVisual(
+        vistas.map((blob, indice) => ({ blob, etiqueta: `Vista ${indice + 1} del modelo` })),
+        modelFile.name,
+      );
+      archivosRevisados.push(modelFile.name);
+    }
+    return {
+      archivosRevisados,
+      advertencia: recursoNoVisual
+        ? `Gemini no puede comprobar visualmente el contenido interno de "${resourceFile?.name}".`
+        : undefined,
+    };
+  }
+
+  async function handleAnalyzeResources() {
+    setResourceScanError("");
+    setResourceReviewResult(null);
+    setResourceScanLoading(true);
+    try {
+      const resultado = await revisarRecursosVisuales();
+      setResourceReviewResult({
+        message: resultado.archivosRevisados.length
+          ? `Gemini no detectó contenido que infrinja las normas en: ${resultado.archivosRevisados.join(", ")}.`
+          : "No se adjuntaron imágenes ni modelos 3D para revisar visualmente.",
+        advertencia: resultado.advertencia,
+      });
+    } catch (error) {
+      console.error("Error al moderar los recursos:", error);
+      setResourceScanError(error instanceof Error
+        ? error.message
+        : "No se pudieron analizar visualmente los recursos.");
+      return;
+    } finally {
+      setResourceScanLoading(false);
+    }
+  }
 
   async function handlePublish() {
     setStep("publishing");
@@ -321,7 +569,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
         software: software || undefined,
         exif: categoria === "Fotografía" && Object.keys(exifData).length > 0 ? exifData : undefined,
         resources: Array.isArray(data.resources)
-          ? data.resources.map((resource: { name: string; url?: string }) => ({
+          ? data.resources.map((resource: { name: string; url?: string; extension?: string; tipoMime?: string }) => ({
               ...resource,
               url: fullUrl(resource.url),
             }))
@@ -974,7 +1222,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               Validación con IA
             </h2>
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
-              Verificando que tu contenido cumple las pautas de Pinspiration
+              Verificando las {mediaFiles.length} imágenes para comprobar que cumplen las pautas de Pinspiration
             </p>
 
             <div
@@ -1002,7 +1250,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
             <p style={{ color: "#7a909f", fontSize: 12 }}>
               {aiProgress < 100
-                ? `Analizando... ${Math.round(aiProgress)}%`
+                ? `Analizando imagen ${aiCurrentImage} de ${mediaFiles.length}... ${Math.round(aiProgress)}%`
                 : aiResult?.aprobado
                 ? "✓ Contenido aprobado"
                 : "✗ Contenido rechazado"}
@@ -1028,7 +1276,10 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                   ✓ <strong>{aiResult.razon}</strong> — Categoría detectada: <strong>{aiResult.categoria}</strong>
                 </div>
                 <button
-                  onClick={() => setStep("form")}
+                  onClick={() => {
+                    setTags(aiResult.etiquetas.join(", "));
+                    setStep("form");
+                  }}
                   className="btn-primary"
                   style={{ width: "100%" }}
                 >
@@ -1050,6 +1301,13 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                 }}
               >
                 <strong>Publicación bloqueada:</strong> {aiResult.razon}
+                <div style={{ display: "grid", gap: 6, marginTop: 8, textAlign: "left" }}>
+                  {agruparImagenesRechazadas(aiResult.rechazadas).map(({ texto, razon }) => (
+                    <div key={texto}>
+                      <strong>{texto}:</strong> {razon}
+                    </div>
+                  ))}
+                </div>
                 <button
                   onClick={() => setStep("upload")}
                   style={{
@@ -1070,8 +1328,15 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             )}
 
             {aiError && (
-              <div style={{ marginTop: 16, color: "#e05a5a", fontSize: 13 }}>
-                {aiError}
+              <div style={{ marginTop: 16, color: "#e05a5a", fontSize: 13, display: "grid", gap: 12 }}>
+                <span>{aiError}</span>
+                <button
+                  type="button"
+                  onClick={() => setAiAttempt((attempt) => attempt + 1)}
+                  className="btn-secondary"
+                >
+                  Reintentar análisis
+                </button>
               </div>
             )}
           </div>
@@ -1206,6 +1471,9 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                       fontSize: 13,
                     }}
                   />
+                  <span style={{ display: "block", marginTop: 5, fontSize: 11, color: "#7a909f" }}>
+                    La IA sugirió 3 etiquetas según tu imagen. Puedes editarlas, quitarlas o agregar más.
+                  </span>
                 </label>
               </div>
             </div>
@@ -1415,7 +1683,8 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
               Puedes compartir archivos complementarios (.zip, .obj, pinceles, etc.)
               para que otros artistas los descarguen. Para una vista previa 3D interactiva,
-              adjunta un modelo .glb.
+              adjunta un modelo .glb. Gemini revisa visualmente las imágenes y el modelo 3D,
+              pero no puede verificar el contenido interno de todos los formatos de recursos.
             </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1485,6 +1754,8 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                         onClick={() => {
                           setModelFile(null);
                           setModelError("");
+                          setResourceScanError("");
+                          setResourceReviewResult(null);
                         }}
                         style={{ background: "transparent", border: 0, color: "#a9bac5", cursor: "pointer", display: "flex", padding: 4 }}
                       >
@@ -1516,6 +1787,8 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                     if (!e.target.checked) {
                       setResourceFile(null);
                       setResourceName("");
+                      setResourceScanError("");
+                      setResourceReviewResult(null);
                     }
                   }}
                   style={{ width: 16, height: 16, accentColor: "#00385a" }}
@@ -1557,21 +1830,15 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                       e.preventDefault();
                       (e.currentTarget as HTMLElement).style.borderColor = "#242f38";
                       const file = e.dataTransfer.files[0];
-                      if (file) {
-                        setResourceFile(file);
-                        if (!resourceName) setResourceName(file.name);
-                      }
+                      handleResourceFile(file);
                     }}
                   >
                     <input
                       type="file"
                       style={{ display: "none" }}
                       onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setResourceFile(file);
-                          if (!resourceName) setResourceName(file.name);
-                        }
+                        handleResourceFile(e.target.files?.[0]);
+                        e.target.value = "";
                       }}
                     />
                     {resourceFile ? (
@@ -1582,7 +1849,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                             {resourceFile.name}
                           </span>
                           <span style={{ fontSize: 11, color: "#7a909f" }}>
-                            {(resourceFile.size / (1024 * 1024)).toFixed(2)} MB — Archivo listo para servir
+                            {(resourceFile.size / (1024 * 1024)).toFixed(2)} MB
                           </span>
                         </div>
                       </div>
@@ -1596,7 +1863,6 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                       </>
                     )}
                   </label>
-
                   <label
                     style={{
                       fontSize: 13,
@@ -1624,6 +1890,38 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               )}
             </div>
 
+            {resourceReviewResult && (
+              <div
+                role="status"
+                style={{
+                  marginTop: 16,
+                  padding: "14px 16px",
+                  background: "#0d2a1a",
+                  border: "1px solid #1a6a3a",
+                  borderRadius: 12,
+                  color: "#5ddf9a",
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <IconCheck />
+                  <span><strong>Revisión visual completada:</strong> {resourceReviewResult.message}</span>
+                </div>
+                {resourceReviewResult.advertencia && (
+                  <p style={{ margin: "8px 0 0 26px", color: "#f0bd72" }}>
+                    {resourceReviewResult.advertencia} Quien lo descargue verá una advertencia de seguridad.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {resourceScanError && (
+              <p role="alert" style={{ margin: "14px 0 0", color: "#ff8080", fontSize: 12 }}>
+                {resourceScanError}
+              </p>
+            )}
+
             <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
               <button
                 onClick={() => setStep("form")}
@@ -1633,11 +1931,24 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                 ← Atrás
               </button>
               <button
-                onClick={handlePublish}
+                onClick={() => {
+                  if (resourceReviewResult || (!resourceFile && !modelFile)) {
+                    void handlePublish();
+                  } else {
+                    void handleAnalyzeResources();
+                  }
+                }}
+                disabled={resourceScanLoading}
                 className="btn-primary"
                 style={{ flex: 2 }}
               >
-                Publicar pin
+                {resourceScanLoading
+                  ? "Analizando recursos..."
+                  : resourceReviewResult
+                    ? "Continuar →"
+                    : resourceFile || modelFile
+                      ? "Revisar con IA"
+                      : "Publicar pin"}
               </button>
             </div>
           </div>
@@ -1680,7 +1991,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               Publicando tu pin...
             </h2>
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
-              Guardando imágenes y estructurando los datos
+              Moderando la vista previa y guardando los archivos
             </p>
           </div>
         )}

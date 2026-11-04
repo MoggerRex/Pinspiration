@@ -5,7 +5,7 @@ import type { Pin, Artist } from "../tipos";
 import type { Render3DMode, VisorModelo3DProps } from "../componentes/VisorModelo3D";
 import { tagClass, formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
-import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2, Settings2, Box, Images } from "lucide-react";
+import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2, Settings2, Box, Images, ShieldAlert } from "lucide-react";
 import { API, fullUrl } from "../api";
 import "./DetalleObra.css";
 
@@ -42,10 +42,15 @@ interface DetalleObraProps {
   onSelectTag?: (tag: string) => void;
 }
 
-function ResourcesPill({ resources }: { resources: { name: string; url?: string }[] }) {
+function ResourcesPill({ resources }: { resources: { name: string; url?: string; extension?: string; tipoMime?: string }[] }) {
   const [open, setOpen] = useState(false);
   const [alignRight, setAlignRight] = useState(false);
+  const [pendingDownload, setPendingDownload] = useState<{ name: string; url: string } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const requiereAdvertencia = (resource: { name: string; extension?: string; tipoMime?: string }) => {
+    const extension = resource.extension?.toLowerCase() || resource.name.toLowerCase().match(/\.[^.]+$/)?.[0];
+    return ![".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(extension || "");
+  };
 
   // Evalúa dinámicamente si el desplegable se saldría de la pantalla por la derecha
   useEffect(() => {
@@ -59,6 +64,15 @@ function ResourcesPill({ resources }: { resources: { name: string; url?: string 
       }
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!pendingDownload) return;
+    const cerrarConEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPendingDownload(null);
+    };
+    document.addEventListener("keydown", cerrarConEscape);
+    return () => document.removeEventListener("keydown", cerrarConEscape);
+  }, [pendingDownload]);
 
   // Cierra la lista al hacer clic fuera del componente
   useEffect(() => {
@@ -109,7 +123,18 @@ function ResourcesPill({ resources }: { resources: { name: string; url?: string 
                 {r.name}
               </span>
               
-              {r.url ? (
+              {r.url && requiereAdvertencia(r) ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (r.url) setPendingDownload({ name: r.name, url: r.url });
+                  }}
+                  style={{ textDecoration: "none", flexShrink: 0, background: "#00385a", border: 0, borderRadius: 8, padding: "4px 10px", color: "#fff", fontSize: 11, fontFamily: "'DM Sans', sans-serif", fontWeight: 600, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Descargar
+                </button>
+              ) : r.url ? (
                 <a
                   href={r.url}
                   download={r.name}
@@ -129,6 +154,59 @@ function ResourcesPill({ resources }: { resources: { name: string; url?: string 
               )}
             </div>
           ))}
+        </div>
+      )}
+      {pendingDownload && (
+        <div
+          role="presentation"
+          onClick={() => setPendingDownload(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="resource-download-warning-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{ position: "relative", width: "min(100%, 440px)", padding: 26, borderRadius: 20, background: "#1a2228", border: "1px solid #35424b", boxShadow: "0 24px 80px rgba(0,0,0,0.55)", color: "#e8eef2", fontFamily: "'DM Sans', sans-serif" }}
+          >
+            <button
+              type="button"
+              aria-label="Cerrar advertencia"
+              onClick={() => setPendingDownload(null)}
+              style={{ position: "absolute", top: 14, right: 14, width: 34, height: 34, display: "grid", placeItems: "center", borderRadius: "50%", background: "#13191d", border: "1px solid #303b43", color: "#a9bac5", cursor: "pointer" }}
+            >
+              <X size={18} />
+            </button>
+            <div style={{ width: 46, height: 46, display: "grid", placeItems: "center", borderRadius: 14, background: "#34251a", color: "#f0ae55", marginBottom: 16 }}>
+              <ShieldAlert size={24} />
+            </div>
+            <h2 id="resource-download-warning-title" style={{ margin: "0 42px 10px 0", fontSize: 19, fontFamily: "'Playfair Display', serif" }}>
+              Descarga bajo tu responsabilidad
+            </h2>
+            <p style={{ margin: "0 0 8px", color: "#b0c0c9", fontSize: 14, lineHeight: 1.6 }}>
+              Este tipo de archivo no se puede comprobar visualmente con la IA y no se ha analizado en busca de virus.
+            </p>
+            <p style={{ margin: "0 0 20px", color: "#82949e", fontSize: 13, lineHeight: 1.55, overflowWrap: "anywhere" }}>
+              ¿Estás seguro de que quieres descargar <strong style={{ color: "#d5dfe5" }}>{pendingDownload.name}</strong>? Ábrelo solo si confías en quien lo publicó.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => setPendingDownload(null)}
+                style={{ padding: "9px 16px", borderRadius: 10, background: "#202a31", border: "1px solid #35424b", color: "#c5d0d6", font: "600 13px 'DM Sans', sans-serif", cursor: "pointer" }}
+              >
+                Cancelar
+              </button>
+              <a
+                href={pendingDownload.url}
+                download={pendingDownload.name}
+                onClick={() => setPendingDownload(null)}
+                style={{ padding: "9px 16px", borderRadius: 10, background: "#00385a", border: "1px solid #07527d", color: "#fff", font: "600 13px 'DM Sans', sans-serif", textDecoration: "none", cursor: "pointer" }}
+              >
+                Descargar de todos modos
+              </a>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -204,7 +282,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
             setDetalleMedia(data.publicacion.media.map(fullUrl));
           }
           if (Array.isArray(data.publicacion.resources)) {
-            setDetalleRecursos(data.publicacion.resources.map((resource: { name: string; url?: string }) => ({
+            setDetalleRecursos(data.publicacion.resources.map((resource: { name: string; url?: string; extension?: string; tipoMime?: string }) => ({
               ...resource,
               url: fullUrl(resource.url),
             })));
@@ -346,8 +424,8 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
       if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
 
       let direction = 0;
-      if (event.key === "ArrowLeft" || event.key === "ArrowUp") direction = -1;
-      if (event.key === "ArrowRight" || event.key === "ArrowDown") direction = 1;
+      if (event.key === "ArrowLeft") direction = -1;
+      if (event.key === "ArrowRight") direction = 1;
       if (direction === 0) return;
 
       event.preventDefault();
