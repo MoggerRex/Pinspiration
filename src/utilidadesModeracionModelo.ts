@@ -65,9 +65,11 @@ export async function crearVistasModeracionModelo(file: File): Promise<Blob[]> {
   const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
   const distance = largestDimension / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.5;
   const cameraDirections = [
-    new THREE.Vector3(0.65, 0.45, 1),
-    new THREE.Vector3(1, 0.35, 0.2),
-    new THREE.Vector3(-0.65, 0.45, -1),
+    new THREE.Vector3(0, 0.25, 1),
+    new THREE.Vector3(1, 0.25, 0),
+    new THREE.Vector3(0, 0.25, -1),
+    new THREE.Vector3(-1, 0.25, 0),
+    new THREE.Vector3(0.65, 1, 0.65),
   ];
 
   let renderer: THREE.WebGLRenderer;

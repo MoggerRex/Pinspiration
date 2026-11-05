@@ -2,6 +2,7 @@ import type { Pin } from "../tipos";
 import { tagClass } from "../ayudantes";
 import { IconHistory } from "../componentes/Iconos";
 import { ArrowLeft } from "lucide-react";
+import { esVideoMedia } from "../utilidadesVideo";
 
 interface HistorialProps {
   history: Pin[];
@@ -96,17 +97,37 @@ export function Historial({ history, onSave, onPinClick, onBack }: HistorialProp
                 onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#00385a")}
                 onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#242f38")}
               >
-                <img
-                  src={pin.imgUrl}
-                  alt={pin.title}
-                  style={{
-                    width: 52,
-                    height: 52,
-                    borderRadius: 8,
-                    objectFit: "cover",
-                    flexShrink: 0,
-                  }}
-                />
+                {esVideoMedia(pin.imgUrl) ? (
+                  <video
+                    src={pin.imgUrl}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    onLoadedMetadata={(event) => {
+                      event.currentTarget.currentTime = Math.min(0.05, event.currentTarget.duration / 2);
+                    }}
+                    aria-label={`Primer fotograma de ${pin.title}`}
+                    style={{
+                      width: 52,
+                      height: 52,
+                      borderRadius: 8,
+                      objectFit: "cover",
+                      flexShrink: 0,
+                    }}
+                  />
+                ) : (
+                  <img
+                    src={pin.imgUrl}
+                    alt={pin.title}
+                    style={{
+                      width: 52,
+                      height: 52,
+                      borderRadius: 8,
+                      objectFit: "cover",
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p
                     style={{

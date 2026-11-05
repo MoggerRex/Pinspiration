@@ -1,12 +1,13 @@
 import { createElement, useState, useEffect, useRef, useCallback } from "react";
-import type { ComponentType } from "react";
+import type { ComponentType, RefObject } from "react";
 import type { CSSProperties } from "react";
 import type { Pin, Artist } from "../tipos";
 import type { Render3DMode, VisorModelo3DProps } from "../componentes/VisorModelo3D";
 import { tagClass, formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
-import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2, Settings2, Box, Images, ShieldAlert } from "lucide-react";
+import { ArrowLeft, UserRoundPlus, Bookmark, Heart, MessageCircle, X, Maximize2, ChevronLeft, ChevronRight, Trash2, Settings2, Box, Images, ShieldAlert, Rewind, FastForward } from "lucide-react";
 import { API, fullUrl } from "../api";
+import { esVideoMedia } from "../utilidadesVideo";
 import "./DetalleObra.css";
 
 // Interface para los comentarios
@@ -18,6 +19,70 @@ interface Comment {
   avatar: string;
   text: string;
   date: string;
+}
+
+function VideoPlayer({ src, videoRef, lightbox = false }: {
+  src: string;
+  videoRef: RefObject<HTMLVideoElement | null>;
+  lightbox?: boolean;
+}) {
+  const [duration, setDuration] = useState(0);
+  const jump = duration > 0 && duration < 10 ? 5 : 10;
+
+  function seek(seconds: number) {
+    const video = videoRef.current;
+    if (video) video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + seconds));
+  }
+
+  return (
+    <div style={{ position: "relative", display: "inline-flex", maxWidth: "100%", maxHeight: lightbox ? "90vh" : "calc(100vh - 112px)" }}>
+      <video
+        ref={videoRef}
+        key={src}
+        src={src}
+        autoPlay
+        muted
+        controls
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
+        onClick={(event) => event.stopPropagation()}
+        aria-label="Video de la publicación"
+        style={{
+          display: "block",
+          width: "auto",
+          height: "auto",
+          maxWidth: lightbox ? "90vw" : "100%",
+          maxHeight: lightbox ? "90vh" : "calc(100vh - 112px)",
+          objectFit: "contain",
+        }}
+      />
+      <button
+        type="button"
+        aria-label={`Retroceder ${jump} segundos`}
+        title={`Retroceder ${jump} segundos`}
+        onClick={(event) => {
+          event.stopPropagation();
+          seek(-jump);
+        }}
+        style={{ position: "absolute", left: "25%", top: "50%", transform: "translate(-50%, -50%)", border: 0, borderRadius: 28, padding: 10, color: "white", background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", gap: 3, cursor: "pointer" }}
+      >
+        <Rewind size={20} /><span style={{ fontSize: 11 }}>{jump}</span>
+      </button>
+      <button
+        type="button"
+        aria-label={`Adelantar ${jump} segundos`}
+        title={`Adelantar ${jump} segundos`}
+        onClick={(event) => {
+          event.stopPropagation();
+          seek(jump);
+        }}
+        style={{ position: "absolute", right: "25%", top: "50%", transform: "translate(50%, -50%)", border: 0, borderRadius: 28, padding: 10, color: "white", background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", gap: 3, cursor: "pointer" }}
+      >
+        <FastForward size={20} /><span style={{ fontSize: 11 }}>{jump}</span>
+      </button>
+    </div>
+  );
 }
 
 // ─── Componente auxiliar para Recursos ───────────────────────────────────────
@@ -330,6 +395,8 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
   }, [mostrarModelo3d, detalleModelo3d]);
 
   const [lightbox, setLightbox] = useState(false);
+  const videoPrincipalRef = useRef<HTMLVideoElement>(null);
+  const videoExpandidoRef = useRef<HTMLVideoElement>(null);
   const [descModalOpen, setDescModalOpen] = useState(false);
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
 
@@ -346,6 +413,20 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
     document.addEventListener("keydown", cerrarConEscape);
     return () => document.removeEventListener("keydown", cerrarConEscape);
   }, [lightbox, modeloExpandido]);
+
+  useEffect(() => {
+    const manejarEspacio = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || event.defaultPrevented) return;
+      if (event.target instanceof Element && event.target.closest("button, input, textarea, select, [contenteditable='true']")) return;
+      const video = lightbox ? videoExpandidoRef.current : videoPrincipalRef.current;
+      if (!video) return;
+      event.preventDefault();
+      if (video.paused) void video.play().catch((error) => console.error("No se pudo reproducir el video:", error));
+      else video.pause();
+    };
+    document.addEventListener("keydown", manejarEspacio);
+    return () => document.removeEventListener("keydown", manejarEspacio);
+  }, [lightbox]);
 
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentInput, setCommentInput] = useState("");
@@ -653,6 +734,16 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
 
   const currentMediaUrl = mediaList[activeMediaIdx] || pin.imgUrl;
 
+  useEffect(() => {
+    if (lightbox) {
+      videoPrincipalRef.current?.pause();
+    } else if (esVideoMedia(currentMediaUrl) && videoPrincipalRef.current) {
+      void videoPrincipalRef.current.play().catch((error: unknown) => {
+        console.error("No se pudo reanudar el video de la publicación:", error);
+      });
+    }
+  }, [currentMediaUrl, lightbox]);
+
   // Contadores del autor: los reales de la vista si ya llegaron, si no los del mapa de artistas
   const artistaSeguidores = artistaApi?.seguidores ?? artist.followers;
   const artistaSiguiendo = artistaApi?.siguiendo ?? artist.following;
@@ -701,19 +792,23 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                 </div>
               )}
 
-              <img
-                src={currentMediaUrl.replace(/w=\d+(&h=\d+)?(&fit=crop)?/, "w=1200")}
-                alt={pin.title}
-                style={{
-                  display: "block",
-                  width: "auto",
-                  height: "auto",
-                  maxWidth: "100%",
-                  maxHeight: "calc(100vh - 112px)",
-                  objectFit: "contain",
-                  visibility: mostrarModelo3d && detalleModelo3d ? "hidden" : "visible",
-                }}
-              />
+              {esVideoMedia(currentMediaUrl) ? (
+                <VideoPlayer src={currentMediaUrl} videoRef={videoPrincipalRef} />
+              ) : (
+                <img
+                  src={currentMediaUrl.replace(/w=\d+(&h=\d+)?(&fit=crop)?/, "w=1200")}
+                  alt={pin.title}
+                  style={{
+                    display: "block",
+                    width: "auto",
+                    height: "auto",
+                    maxWidth: "100%",
+                    maxHeight: "calc(100vh - 112px)",
+                    objectFit: "contain",
+                    visibility: mostrarModelo3d && detalleModelo3d ? "hidden" : "visible",
+                  }}
+                />
+              )}
 
               {mostrarModelo3d && detalleModelo3d && (
                 <div className="pin-detail-model-frame">
@@ -934,7 +1029,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                 }}
               >
                 <Maximize2 size={14} />
-                {mostrarModelo3d ? (modeloExpandido ? "Salir de pantalla completa" : "Ampliar modelo") : "Ampliar imagen"}
+                {mostrarModelo3d ? (modeloExpandido ? "Salir de pantalla completa" : "Ampliar modelo") : esVideoMedia(currentMediaUrl) ? "Ampliar video" : "Ampliar imagen"}
               </button>
               {mostrarModelo3d && detalleModelo3d && (
                 <button
@@ -1057,12 +1152,16 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                 </>
               )}
 
-              <img
-                src={currentMediaUrl.replace(/w=\d+(&h=\d+)?(&fit=crop)?/, "w=2400")}
-                alt={pin.title}
-                onClick={(e) => e.stopPropagation()}
-                style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 16, boxShadow: "0 24px 80px rgba(0,0,0,0.8)" }}
-              />
+              {esVideoMedia(currentMediaUrl) ? (
+                <VideoPlayer src={currentMediaUrl} videoRef={videoExpandidoRef} lightbox />
+              ) : (
+                <img
+                  src={currentMediaUrl.replace(/w=\d+(&h=\d+)?(&fit=crop)?/, "w=2400")}
+                  alt={pin.title}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 16, boxShadow: "0 24px 80px rgba(0,0,0,0.8)" }}
+                />
+              )}
             </div>
           )}
 
@@ -1412,7 +1511,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
               {currentPalette && currentPalette.length > 0 && (
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "12px 14px", background: "#1a2228", borderRadius: 14, border: "1px solid #242f38" }}>
                   <p style={{ margin: "0 0 8px", fontSize: 10, color: "#7a909f", textTransform: "uppercase", letterSpacing: "0.7px", fontWeight: 600, whiteSpace: "nowrap" }}>
-                    Paleta dominante {mediaList.length > 1 ? `(Foto ${activeMediaIdx + 1})` : ""}
+                    Paleta dominante {mediaList.length > 1 ? `(Archivo ${activeMediaIdx + 1})` : ""}
                   </p>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     {currentPalette.map((hex, idx) => (
@@ -1696,6 +1795,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
               onSave={onSave}
               onArtist={onArtist}
               onPinClick={onPin}
+              enableVideoAutoplay={false}
             />
           ))}
         </div>

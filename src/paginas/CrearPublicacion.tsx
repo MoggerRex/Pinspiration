@@ -3,6 +3,7 @@ import type { DragEvent } from "react";
 import type { Pin, PinType } from "../tipos";
 import { extractColors, mockExif } from "../utilidadesImagen";
 import { optimizarImagen } from "../utilidadesCargaImagen";
+import { esVideoMedia, extraerFotogramasVideo, obtenerDuracionVideo, validarArchivoVideo } from "../utilidadesVideo";
 import { IconCheck, IconImage, IconZap } from "../componentes/Iconos";
 import { ArrowLeft, Upload, FileCheck, Plus, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 
@@ -17,17 +18,20 @@ interface CrearPublicacionProps {
   currentUser: any;
 }
 
-function agruparImagenesRechazadas(rechazadas: { imagen: number; razon: string }[]) {
-  const grupos = new Map<string, number[]>();
-  for (const { imagen, razon } of rechazadas) {
-    grupos.set(razon, [...(grupos.get(razon) || []), imagen]);
+function agruparMediosRechazados(rechazadas: { imagen: number; razon: string; esVideo?: boolean }[]) {
+  const grupos = new Map<string, { razon: string; esVideo: boolean; medios: number[] }>();
+  for (const { imagen, razon, esVideo = false } of rechazadas) {
+    const clave = `${esVideo ? "video" : "imagen"}:${razon}`;
+    const grupo = grupos.get(clave) || { razon, esVideo, medios: [] };
+    grupo.medios.push(imagen);
+    grupos.set(clave, grupo);
   }
-  return [...grupos].map(([razon, imagenes]) => {
-    const numeracion = imagenes.length > 1
-      ? `${imagenes.slice(0, -1).join(", ")} y ${imagenes[imagenes.length - 1]}`
-      : String(imagenes[0]);
+  return [...grupos.values()].map(({ razon, esVideo, medios }) => {
+    const numeracion = medios.length > 1
+      ? `${medios.slice(0, -1).join(", ")} y ${medios[medios.length - 1]}`
+      : String(medios[0]);
     return {
-      texto: `${imagenes.length > 1 ? "Imágenes" : "Imagen"} ${numeracion}`,
+      texto: `${esVideo ? medios.length > 1 ? "Videos" : "Video" : medios.length > 1 ? "Imágenes" : "Imagen"} ${numeracion}`,
       razon,
     };
   });
@@ -60,6 +64,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   const [modelError, setModelError] = useState("");
   const [resourceScanLoading, setResourceScanLoading] = useState(false);
   const [resourceScanError, setResourceScanError] = useState("");
+  const [resourceScanProgress, setResourceScanProgress] = useState("");
   const [resourceReviewResult, setResourceReviewResult] = useState<{
     message: string;
     advertencia?: string;
@@ -80,7 +85,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     razon: string;
     categoria: string;
     etiquetas: string[];
-    rechazadas: { imagen: number; razon: string }[];
+    rechazadas: { imagen: number; razon: string; esVideo: boolean }[];
   } | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiCurrentImage, setAiCurrentImage] = useState(0);
@@ -96,14 +101,17 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
   // Recalcular colores dominantes cada vez que cambie la imagen seleccionada
   useEffect(() => {
-    if (mediaList.length > 0 && mediaList[activeMediaIdx]) {
+    const activeFile = mediaFiles[activeMediaIdx];
+    if (mediaList.length > 0 && mediaList[activeMediaIdx] && activeFile && !esVideoMedia(activeFile)) {
       const img = new Image();
       img.onload = () => {
         setColors(extractColors(img));
       };
       img.src = mediaList[activeMediaIdx];
+    } else if (activeFile && esVideoMedia(activeFile)) {
+      setColors([]);
     }
-  }, [activeMediaIdx, mediaList]);
+  }, [activeMediaIdx, mediaList, mediaFiles]);
 
   async function handleFiles(files: FileList | File[]) {
     const fileArr = Array.from(files);
@@ -111,17 +119,35 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     if (availableSlots <= 0) return;
 
     const filesToProcess = fileArr.slice(0, availableSlots);
-
-    setUploadError("");
+    const archivosOptimizados: File[] = [];
+    const errores: string[] = [];
     try {
-      const optimizedFiles: File[] = [];
       for (const file of filesToProcess) {
-        optimizedFiles.push(await optimizarImagen(file, 2560));
+        if (file.type.startsWith("video/") || /\.mp4$/i.test(file.name)) {
+          const error = validarArchivoVideo(file);
+          if (error) {
+            errores.push(`${file.name}: ${error}`);
+            continue;
+          }
+          try {
+            await obtenerDuracionVideo(file);
+            archivosOptimizados.push(file);
+          } catch (error) {
+            errores.push(`${file.name}: ${error instanceof Error ? error.message : "Video inválido."}`);
+          }
+          continue;
+        }
+        if (!file.type.startsWith("image/")) {
+          errores.push(`${file.name}: selecciona una imagen o un video MP4.`);
+          continue;
+        }
+        archivosOptimizados.push(await optimizarImagen(file, 2560));
       }
-      const previews = optimizedFiles.map((file) => URL.createObjectURL(file));
+      const previews = archivosOptimizados.map((file) => URL.createObjectURL(file));
       previews.forEach((url) => mediaObjectUrls.current.add(url));
-      setMediaFiles((prev) => [...prev, ...optimizedFiles]);
+      setMediaFiles((prev) => [...prev, ...archivosOptimizados]);
       setMediaList((prev) => [...prev, ...previews]);
+      setUploadError(errores.join(" "));
       if (mediaList.length === 0 && filesToProcess[0]?.type === "image/jpeg") {
         setExif(mockExif());
       }
@@ -226,25 +252,38 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
     let activo = true;
 
-    async function validarImagen() {
+    async function validarMedios() {
       try {
         const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash-lite" });
-        const resultados: { imagen: number; aprobado: boolean; razon: string }[] = [];
+        const resultados: { imagen: number; aprobado: boolean; razon: string; esVideo: boolean }[] = [];
         let categoriaPortada = "";
         let etiquetasPortada: string[] = [];
         for (let indice = 0; indice < mediaFiles.length; indice += 1) {
           if (!activo) return;
           const archivo = mediaFiles[indice];
           setAiCurrentImage(indice + 1);
-          const bytes = new Uint8Array(await archivo.arrayBuffer());
-          let binary = "";
-          for (let byteOffset = 0; byteOffset < bytes.length; byteOffset += 0x8000) {
-            binary += String.fromCharCode(...bytes.subarray(byteOffset, byteOffset + 0x8000));
-          }
           const esPortada = indice === 0;
+          const esVideo = esVideoMedia(archivo);
+          const fotogramas = esVideo ? await extraerFotogramasVideo(archivo) : [archivo];
+          const datosMedios = await Promise.all(fotogramas.map(async (medio) => {
+            const bytes = new Uint8Array(await medio.arrayBuffer());
+            let binary = "";
+            for (let byteOffset = 0; byteOffset < bytes.length; byteOffset += 0x8000) {
+              binary += String.fromCharCode(...bytes.subarray(byteOffset, byteOffset + 0x8000));
+            }
+            return {
+              inlineData: {
+                data: btoa(binary),
+                mimeType: medio.type || "image/jpeg",
+              },
+            };
+          }));
+          const categoriaForzada = esPortada && mediaFiles.length === 1 && esVideo;
           const prompt = `
             Eres moderador de contenido de "Pinspiration", una plataforma profesional para artistas visuales.
-            Analiza únicamente la imagen adjunta, que corresponde a la imagen ${indice + 1} de ${mediaFiles.length} de una publicación. Decide por el contenido visible de esta imagen, incluyendo texto, símbolos y contexto. No presupongas que una imagen cumple por ser ilustración, edición o arte.
+            ${esVideo
+              ? `Analiza las hojas adjuntas del video MP4 ${indice + 1} de ${mediaFiles.length}; cada hoja reúne fotogramas muestreados aproximadamente una vez por segundo y ordenados cronológicamente. Busca infracciones en cualquier parte de la secuencia, no apruebes solo porque un fotograma aislado parezca aceptable.`
+              : `Analiza únicamente la imagen ${indice + 1} de ${mediaFiles.length} de una publicación. Decide por el contenido visible, incluyendo texto, símbolos y contexto. No presupongas que cumple por ser ilustración, edición o arte.`}
 
             CONTENIDO PERMITIDO:
             - Fotografía normal o profesional, edición fotográfica, arte 2D y arte 3D.
@@ -254,10 +293,23 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             - Capturas de pantalla de texto, código o chats.
             - Contenido racista, discursos o símbolos de odio.
             - Violencia gráfica explícita, gore o autolesiones.
-            - Contenido sexualmente explícito o pornografía.
+            - Actos sexuales explícitos o pornografía.
+
+            CRITERIOS PARA DESNUDEZ, OUTFITS Y POSES:
+            - Permite outfits, bikinis, lencería, ropa interior, vestidos ceñidos, minifaldas, escotes y transparencias, además de modelaje, cosplay, selfies y poses deportivas o artísticas, cuando la imagen no tenga un enfoque sexual evidente. Que algo no sea pornografía ni muestre un acto sexual no basta para aprobarlo.
+            - Rechaza genitales (incluida la vulva), vagina o ano visibles, incluso parcialmente o a través de ropa transparente. Los pezones visibles o insinuados no son automáticamente una infracción: aplica los criterios de contexto artístico/educativo y enfoque sexual de abajo.
+            - Permite que se marquen pezones o curvas bajo la ropa. También permite transparencias o exposición parcial del pecho, incluidos los pezones, si el contexto artístico o educativo es claro y la presentación no es sexual.
+            - Rechaza imágenes con una presentación claramente sexual aunque la persona lleve ropa y no haya contacto sexual. No confundas curvas, ropa ceñida o un encuadre que las incluya con intención sexual; debe ser evidente por la pose, expresión, gestos o puesta en escena.
+            - Rechaza la exhibición deliberada y sexual de la entrepierna, un énfasis claramente erótico en el contorno íntimo, objetos colocados para simular penetración y apretar o manipular los pechos de forma sexual. Una pose en cuatro apoyos o con piernas separadas no basta por sí sola si el contexto es claramente deportivo, de yoga o artístico no sexual.
+            - No rechaces solo por la forma o el tamaño del cuerpo, ropa ceñida, una parte del cuerpo cubierta, curvas visibles o una pose sugerente aislada. Para poses de yoga, ejercicio, danza o modelaje, considera el contexto y rechaza solo si la presentación sexual es clara, no por la pose funcional por sí sola.
+            - Si el caso es limítrofe, rechaza cuando varios elementos visibles en conjunto produzcan una presentación claramente sexualizada; no inventes intención a partir de una sola característica ambigua.
+            - En outfits, transparencias y desnudez parcial permitidos, rechaza si hay señales claras de presentación sexual: exhibir deliberadamente la entrepierna, enfatizar de forma erótica el contorno íntimo, apretar o manipular los pechos, simular penetración, o combinar pose, expresión y encuadre para dirigir descaradamente la atención a zonas íntimas.
+            - Permite desnudez artística o educativa no sexual únicamente cuando ese contexto sea claramente reconocible en la imagen. Si hay desnudez completa y el contexto artístico no es claro, rechaza por desnudez no permitida.
+            - Rechaza actos sexuales explícitos y pornografía.
+            - Si la edad de la persona no es claramente adulta, no permitas desnudez ni contenido sexualizado.
 
             Revisa activamente si se infringe cualquiera de las reglas; no apruebes por defecto ni omitas infracciones porque la imagen también tenga elementos artísticos. Devuelve ÚNICAMENTE JSON válido, sin markdown, con "imagen" igual a ${indice + 1}, "aprobado" booleano y "razon" breve en español. Si la imagen cumple, usa una razón vacía. Si no cumple, explica con claridad qué estándar infringe.
-            ${esPortada ? `Como esta es la portada, incluye también "categoria" ("2D", "3D", "Fotografía" o "Edición") y exactamente tres "etiquetas" descriptivas en español, distintas entre sí, de máximo 50 caracteres y sin #.` : `No incluyas categoría ni etiquetas; estas solo se generan a partir de la portada.`}
+            ${esPortada ? `Como esta es la portada, incluye también "categoria" ("2D", "3D", "Fotografía" o "Edición") y exactamente tres "etiquetas" descriptivas en español, distintas entre sí, de máximo 50 caracteres y sin #.${categoriaForzada ? ` Como la publicación contiene únicamente un video, usa la categoría "Edición".` : ""}` : `No incluyas categoría ni etiquetas; estas solo se generan a partir de la portada.`}
             Formato JSON: ${esPortada
               ? `{"imagen": ${indice + 1}, "aprobado": true, "razon": "", "categoria": "2D", "etiquetas": ["acuarela", "paisaje", "naturaleza"]}`
               : `{"imagen": ${indice + 1}, "aprobado": true, "razon": ""}`}
@@ -274,10 +326,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
           for (let intento = 0; intento < 3; intento += 1) {
             try {
-              const result = await model.generateContent([
-                prompt,
-                { inlineData: { data: btoa(binary), mimeType: archivo.type } },
-              ]);
+              const result = await model.generateContent([prompt, ...datosMedios]);
               const responseText = result.response.text();
               const cleanJson = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
               const respuesta: unknown = JSON.parse(cleanJson);
@@ -324,10 +373,13 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             imagen: indice + 1,
             aprobado: analisis.aprobado === true,
             razon: typeof analisis.razon === "string" ? analisis.razon.trim() : "",
+            esVideo,
           });
 
           if (esPortada) {
-            categoriaPortada = typeof analisis.categoria === "string" ? analisis.categoria : "";
+            categoriaPortada = categoriaForzada
+              ? "Edición"
+              : typeof analisis.categoria === "string" ? analisis.categoria : "";
             const etiquetasUnicas = new Map<string, string>();
             const etiquetasAnalizadas = analisis.etiquetas;
             if (Array.isArray(etiquetasAnalizadas)) {
@@ -346,7 +398,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
         const rechazadas = resultados
           .filter((resultado) => !resultado.aprobado)
-          .map(({ imagen, razon }) => ({ imagen, razon }))
+          .map(({ imagen, razon, esVideo }) => ({ imagen, razon, esVideo }))
           .sort((a, b) => a.imagen - b.imagen);
         const aprobada = rechazadas.length === 0;
         if (aprobada && etiquetasPortada.length !== 3) {
@@ -357,7 +409,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
         setAiProgress(100);
         setAiResult({
           aprobado: aprobada,
-          razon: aprobada ? "Todas las imágenes cumplen las pautas." : "Una o más imágenes no cumplen las pautas.",
+          razon: aprobada ? "Todos los archivos cumplen las pautas." : "Uno o más archivos no cumplen las pautas.",
           categoria: categoriaPortada,
           etiquetas: etiquetasPortada,
           rechazadas,
@@ -379,7 +431,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
       }
     }
 
-    validarImagen();
+    validarMedios();
 
     return () => {
       activo = false;
@@ -404,9 +456,24 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
       text: `
         Modera el contenido visual adjunto para la plataforma de arte Pinspiration.
         Revisa por separado todas las imágenes adjuntas, que son ${imagenes.map((imagen) => imagen.etiqueta).join(", ")} del archivo "${nombreArchivo}".
-        El arte visual, fotografía y modelos artísticos son permitidos.
-        Rechaza si cualquiera de las vistas muestra pornografía o contenido sexual explícito, odio o racismo, símbolos de odio, violencia gráfica/gore/autolesiones, o contenido prohibido de forma clara por las normas de la plataforma.
-        No rechaces por desnudez no sexual o contexto artístico no explícito. No apruebes por defecto: inspecciona cada imagen.
+        El arte visual, la fotografía, las referencias de poses y los modelos artísticos son permitidos.
+        Si los adjuntos son hojas de fotogramas de un video, interpreta todos los cuadros en orden cronológico como una muestra de la secuencia.
+
+        CRITERIOS PARA DESNUDEZ, OUTFITS Y POSES:
+        - Permite outfits, bikinis, lencería, ropa interior, vestidos ceñidos, minifaldas, escotes y transparencias, además de moda, modelaje, cosplay, selfies y poses deportivas o artísticas, cuando la imagen no tenga un enfoque sexual evidente. Que algo no sea pornografía ni muestre un acto sexual no basta para aprobarlo.
+        - Rechaza genitales (incluida la vulva), vagina o ano visibles, incluso parcialmente o a través de ropa transparente. Los pezones visibles o insinuados no son automáticamente una infracción: aplica los criterios de contexto artístico/educativo y enfoque sexual de abajo.
+        - Permite que se marquen pezones o curvas bajo la ropa. También permite transparencias o exposición parcial del pecho, incluidos los pezones, si el contexto artístico o educativo es claro y la presentación no es sexual.
+        - Rechaza imágenes con una presentación claramente sexual aunque la persona lleve ropa y no haya contacto sexual. No confundas curvas, ropa ceñida o un encuadre que las incluya con intención sexual; debe ser evidente por la pose, expresión, gestos o puesta en escena.
+        - Rechaza la exhibición deliberada y sexual de la entrepierna, un énfasis claramente erótico en el contorno íntimo, objetos colocados para simular penetración y apretar o manipular los pechos de forma sexual. Una pose en cuatro apoyos o con piernas separadas no basta por sí sola si el contexto es claramente deportivo, de yoga o artístico no sexual.
+        - No rechaces solo por la forma o el tamaño del cuerpo, ropa ceñida, una parte del cuerpo cubierta, curvas visibles o una pose sugerente aislada. Para poses de yoga, ejercicio, danza o modelaje, considera el contexto y rechaza solo si la presentación sexual es clara, no por la pose funcional por sí sola.
+        - Si el caso es limítrofe, rechaza cuando varios elementos visibles en conjunto produzcan una presentación claramente sexualizada; no inventes intención a partir de una sola característica ambigua.
+        - En outfits, transparencias y desnudez parcial permitidos, rechaza si hay señales claras de presentación sexual: exhibir deliberadamente la entrepierna, enfatizar de forma erótica el contorno íntimo, apretar o manipular los pechos, simular penetración, o combinar pose, expresión y encuadre para dirigir descaradamente la atención a zonas íntimas.
+        - Permite desnudez artística o educativa no sexual únicamente cuando el contexto artístico o educativo sea claramente reconocible. Si hay desnudez completa y ese contexto no es claro en esta vista, rechaza por desnudez no permitida.
+        - Rechaza actos sexuales explícitos y pornografía.
+        - Si la edad de la persona no es claramente adulta, no permitas desnudez ni contenido sexualizado.
+
+        También rechaza contenido racista, discursos o símbolos de odio, violencia gráfica, gore o autolesiones. No apruebes por defecto: inspecciona cuidadosamente el cuerpo, la ropa, la pose, el encuadre y el contexto visible de esta imagen.
+        Si proviene de un modelo 3D, analiza su geometría y detalles visibles; distingue las zonas íntimas cubiertas por ropa de las expuestas. Evalúa solo esta vista y no asumas que otras vistas ya fueron revisadas.
         Devuelve únicamente JSON válido sin markdown: {"aprobado": true, "razon": ""}.
         Si alguna imagen infringe las normas, usa aprobado=false y describe brevemente cuál vista y el motivo en español.
       `,
@@ -437,6 +504,30 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     }
   }
 
+  async function moderarModeloEnCincoVistas(file: File) {
+    const { crearVistasModeracionModelo } = await import("../utilidadesModeracionModelo");
+    const vistas = await crearVistasModeracionModelo(file);
+    if (vistas.length !== 5) {
+      throw new Error(`No se pudieron generar las cinco vistas requeridas para "${file.name}".`);
+    }
+
+    for (let indice = 0; indice < vistas.length; indice += 1) {
+      setResourceScanProgress(`Gemini está analizando la vista ${indice + 1} de 5 de ${file.name}...`);
+      try {
+        await moderarContenidoVisual(
+          [{ blob: vistas[indice], etiqueta: `Vista ${indice + 1} de 5 del modelo` }],
+          file.name,
+        );
+      } catch (error) {
+        throw new Error(
+          `La revisión de la vista ${indice + 1} de 5 de "${file.name}" no fue aprobada: ${
+            error instanceof Error ? error.message : "no se pudo completar el análisis"
+          }`,
+        );
+      }
+    }
+  }
+
   async function revisarRecursosVisuales() {
     const archivosRevisados: string[] = [];
     let recursoNoVisual = false;
@@ -457,17 +548,25 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
         resourceFile.name,
       );
       archivosRevisados.push(resourceFile.name);
+    } else if (resourceFile && extensionImagen === ".mp4" && resourceFile.type === "video/mp4") {
+      const errorVideo = validarArchivoVideo(resourceFile);
+      if (errorVideo) throw new Error(`${resourceFile.name}: ${errorVideo}`);
+      await obtenerDuracionVideo(resourceFile);
+      const fotogramas = await extraerFotogramasVideo(resourceFile);
+      await moderarContenidoVisual(
+        fotogramas.map((blob, indice) => ({ blob, etiqueta: `Hoja cronológica ${indice + 1} de fotogramas del video` })),
+        resourceFile.name,
+      );
+      archivosRevisados.push(`${resourceFile.name} (${fotogramas.length} fotogramas analizados)`);
+    } else if (resourceFile && extensionImagen === ".glb") {
+      await moderarModeloEnCincoVistas(resourceFile);
+      archivosRevisados.push(`${resourceFile.name} (5 vistas analizadas por separado)`);
     } else if (resourceFile) {
       recursoNoVisual = true;
     }
     if (modelFile) {
-      const { crearVistasModeracionModelo } = await import("../utilidadesModeracionModelo");
-      const vistas = await crearVistasModeracionModelo(modelFile);
-      await moderarContenidoVisual(
-        vistas.map((blob, indice) => ({ blob, etiqueta: `Vista ${indice + 1} del modelo` })),
-        modelFile.name,
-      );
-      archivosRevisados.push(modelFile.name);
+      await moderarModeloEnCincoVistas(modelFile);
+      archivosRevisados.push(`${modelFile.name} (5 vistas analizadas por separado)`);
     }
     return {
       archivosRevisados,
@@ -479,6 +578,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
   async function handleAnalyzeResources() {
     setResourceScanError("");
+    setResourceScanProgress("");
     setResourceReviewResult(null);
     setResourceScanLoading(true);
     try {
@@ -497,6 +597,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
       return;
     } finally {
       setResourceScanLoading(false);
+      setResourceScanProgress("");
     }
   }
 
@@ -601,6 +702,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   const renderMediaCarousel = (isFormStep = false) => {
     if (mediaList.length === 0) return null;
     const currentUrl = mediaList[activeMediaIdx] || mediaList[0];
+    const currentFile = mediaFiles[activeMediaIdx];
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -618,11 +720,24 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             justifyContent: "center",
           }}
         >
-          <img
-            src={currentUrl}
-            alt={`Media ${activeMediaIdx + 1}`}
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-          />
+          {currentFile && esVideoMedia(currentFile) ? (
+            <video
+              key={currentUrl}
+              src={currentUrl}
+              controls
+              muted
+              playsInline
+              preload="metadata"
+              aria-label={`Video ${activeMediaIdx + 1}`}
+              style={{ maxWidth: "100%", maxHeight: "100%" }}
+            />
+          ) : (
+            <img
+              src={currentUrl}
+              alt={`Imagen ${activeMediaIdx + 1}`}
+              style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+            />
+          )}
 
           <div
             style={{
@@ -644,7 +759,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
           <button
             onClick={() => removeMedia(activeMediaIdx)}
-            title="Eliminar esta imagen"
+            title="Eliminar este archivo"
             style={{
               position: "absolute",
               top: 12,
@@ -764,9 +879,13 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                 transform: dragOverIdx === i ? "scale(1.06)" : "scale(1)",
                 transition: "all 0.2s ease",
               }}
-              title="Arrastra para reordenar esta imagen"
+              title="Arrastra para reordenar este archivo"
             >
-              <img src={url} alt={`thumb-${i}`} style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
+              {mediaFiles[i] && esVideoMedia(mediaFiles[i]) ? (
+                <video src={url} muted playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
+              ) : (
+                <img src={url} alt={`thumb-${i}`} style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
+              )}
             </div>
           ))}
 
@@ -787,12 +906,12 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                 color: "#5db8e8",
                 transition: "background 0.2s",
               }}
-              title="Agregar más archivos (Máx 20)"
+              title="Agregar imágenes o videos (máx. 20 archivos)"
             >
               <input
                 type="file"
                 multiple
-                accept="image/*"
+                accept="image/*,video/mp4,.mp4"
                 style={{ display: "none" }}
                 onChange={(e) => {
                   if (e.target.files) handleFiles(e.target.files);
@@ -1023,10 +1142,10 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                 margin: "0 0 6px",
               }}
             >
-              Selecciona tu imagen
+              Selecciona tu imagen o video
             </h2>
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
-              Sube hasta 20 imágenes. Se optimizan antes de guardarse.
+              Sube hasta 20 imágenes o videos. Las imágenes se optimizan; los MP4 pueden durar hasta 1 minuto y pesar 100 MB, y conservan su calidad original.
             </p>
             {uploadError && (
               <p role="alert" style={{ color: "#ff9b9b", fontSize: 13, margin: "0 0 16px" }}>
@@ -1065,7 +1184,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                 <input
                   type="file"
                   multiple
-                  accept="image/*"
+                  accept="image/*,video/mp4,.mp4"
                   style={{ display: "none" }}
                   onChange={(e) => {
                     if (e.target.files) handleFiles(e.target.files);
@@ -1078,7 +1197,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                   Arrastra tus archivos aquí o haz clic para subir
                   <br />
                   <span style={{ fontSize: 11, color: "#4a5e6a" }}>
-                    PNG, JPG, WEBP (Hasta 20 imágenes)
+                    PNG, JPG, WEBP o MP4 (hasta 20 archivos; videos de hasta 1 minuto)
                   </span>
                 </span>
               </label>
@@ -1112,18 +1231,22 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             }}
           >
             <div style={{ marginBottom: 20 }}>
-              <img
-                src={mediaList[0]}
-                alt="preview"
-                style={{
-                  maxHeight: 180,
-                  maxWidth: "100%",
-                  borderRadius: 14,
-                  objectFit: "contain",
-                  display: "block",
-                  margin: "0 auto"
-                }}
-              />
+              {mediaFiles[0] && esVideoMedia(mediaFiles[0]) ? (
+                  <video src={mediaList[0]} muted playsInline controls preload="metadata" style={{ maxHeight: 180, maxWidth: "100%", borderRadius: 14, display: "block", margin: "0 auto" }} />
+                ) : (
+                  <img
+                    src={mediaList[0]}
+                    alt="preview"
+                    style={{
+                      maxHeight: 180,
+                      maxWidth: "100%",
+                      borderRadius: 14,
+                      objectFit: "contain",
+                      display: "block",
+                      margin: "0 auto"
+                    }}
+                  />
+                )}
             </div>
             <h2
               style={{
@@ -1132,7 +1255,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                 margin: "0 0 8px",
               }}
             >
-              Analizando imagen...
+              Analizando archivo...
             </h2>
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
               Extrayendo paleta de colores y datos técnicos
@@ -1222,7 +1345,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               Validación con IA
             </h2>
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
-              Verificando las {mediaFiles.length} imágenes para comprobar que cumplen las pautas de Pinspiration
+              Verificando los {mediaFiles.length} archivos con las pautas de Pinspiration
             </p>
 
             <div
@@ -1250,7 +1373,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
             <p style={{ color: "#7a909f", fontSize: 12 }}>
               {aiProgress < 100
-                ? `Analizando imagen ${aiCurrentImage} de ${mediaFiles.length}... ${Math.round(aiProgress)}%`
+                ? `Analizando ${mediaFiles[aiCurrentImage - 1] && esVideoMedia(mediaFiles[aiCurrentImage - 1]) ? "video" : "imagen"} ${aiCurrentImage} de ${mediaFiles.length}... ${Math.round(aiProgress)}%`
                 : aiResult?.aprobado
                 ? "✓ Contenido aprobado"
                 : "✗ Contenido rechazado"}
@@ -1302,7 +1425,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               >
                 <strong>Publicación bloqueada:</strong> {aiResult.razon}
                 <div style={{ display: "grid", gap: 6, marginTop: 8, textAlign: "left" }}>
-                  {agruparImagenesRechazadas(aiResult.rechazadas).map(({ texto, razon }) => (
+                  {agruparMediosRechazados(aiResult.rechazadas).map(({ texto, razon }) => (
                     <div key={texto}>
                       <strong>{texto}:</strong> {razon}
                     </div>
@@ -1322,7 +1445,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                     cursor: "pointer",
                   }}
                 >
-                  Subir otra imagen
+                  Subir otros archivos
                 </button>
               </div>
             )}
@@ -1472,7 +1595,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                     }}
                   />
                   <span style={{ display: "block", marginTop: 5, fontSize: 11, color: "#7a909f" }}>
-                    La IA sugirió 3 etiquetas según tu imagen. Puedes editarlas, quitarlas o agregar más.
+                    La IA sugirió 3 etiquetas según la portada. Puedes editarlas, quitarlas o agregar más.
                   </span>
                 </label>
               </div>
@@ -1683,7 +1806,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
               Puedes compartir archivos complementarios (.zip, .obj, pinceles, etc.)
               para que otros artistas los descarguen. Para una vista previa 3D interactiva,
-              adjunta un modelo .glb. Gemini revisa visualmente las imágenes y el modelo 3D,
+              adjunta un modelo .glb. Gemini revisa visualmente las imágenes, los videos y el modelo 3D,
               pero no puede verificar el contenido interno de todos los formatos de recursos.
             </p>
 
@@ -1916,6 +2039,12 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               </div>
             )}
 
+            {resourceScanLoading && resourceScanProgress && (
+              <p role="status" style={{ margin: "14px 0 0", color: "#7a909f", fontSize: 12 }}>
+                {resourceScanProgress}
+              </p>
+            )}
+
             {resourceScanError && (
               <p role="alert" style={{ margin: "14px 0 0", color: "#ff8080", fontSize: 12 }}>
                 {resourceScanError}
@@ -1966,20 +2095,24 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             }}
           >
             {mediaList[0] && (
-              <img
-                src={mediaList[0]}
-                alt="preview"
-                style={{
-                  maxHeight: 160,
-                  maxWidth: "100%",
-                  borderRadius: 14,
-                  objectFit: "contain",
-                  marginBottom: 20,
-                  opacity: 0.7,
-                  display: "block",
-                  margin: "0 auto"
-                }}
-              />
+              mediaFiles[0] && esVideoMedia(mediaFiles[0]) ? (
+                <video src={mediaList[0]} muted playsInline controls preload="metadata" style={{ maxHeight: 160, maxWidth: "100%", borderRadius: 14, marginBottom: 20, opacity: 0.7, display: "block", margin: "0 auto" }} />
+              ) : (
+                <img
+                  src={mediaList[0]}
+                  alt="preview"
+                  style={{
+                    maxHeight: 160,
+                    maxWidth: "100%",
+                    borderRadius: 14,
+                    objectFit: "contain",
+                    marginBottom: 20,
+                    opacity: 0.7,
+                    display: "block",
+                    margin: "0 auto"
+                  }}
+                />
+              )
             )}
             <h2
               style={{

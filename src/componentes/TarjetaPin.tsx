@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bookmark, Square, SquareCheck, Trash2 } from "lucide-react";
 import type { Pin, Artist } from "../tipos";
 import { tagClass } from "../ayudantes";
+import { actualizarVideoPrevia, esVideoMedia, quitarVideoPrevio } from "../utilidadesVideo";
 import "./TarjetaPin.css";
 
 interface TarjetaPinProps {
@@ -14,6 +15,7 @@ interface TarjetaPinProps {
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelection?: (pin: Pin) => void;
+  enableVideoAutoplay?: boolean;
 }
 
 export function TarjetaPin({
@@ -26,33 +28,66 @@ export function TarjetaPin({
   selectionMode = false,
   selected = false,
   onToggleSelection,
+  enableVideoAutoplay = true,
 }: TarjetaPinProps) {
   const imageRef = useRef<HTMLImageElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoVisibleRef = useRef(false);
+  const videoHoveredRef = useRef(false);
   const [rowSpan, setRowSpan] = useState(1);
+  const esVideo = esVideoMedia(pin.imgUrl);
 
   useEffect(() => {
-    const image = imageRef.current;
-    if (!image) return;
+    const media = esVideo ? videoRef.current : imageRef.current;
+    if (!media) return;
 
     const updateRowSpan = () => {
       const rowHeight = 8;
       const rowGap = 12;
-      setRowSpan(Math.ceil((image.getBoundingClientRect().height + rowGap) / (rowHeight + rowGap)));
+      setRowSpan(Math.ceil((media.getBoundingClientRect().height + rowGap) / (rowHeight + rowGap)));
     };
 
     const observer = new ResizeObserver(updateRowSpan);
-    observer.observe(image);
+    observer.observe(media);
     updateRowSpan();
     return () => observer.disconnect();
-  }, []);
+  }, [esVideo, pin.imgUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !esVideo || !enableVideoAutoplay) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      const visible = entry.isIntersecting && entry.intersectionRatio >= 0.25;
+      videoVisibleRef.current = visible;
+      actualizarVideoPrevia(video, visible, videoHoveredRef.current);
+    }, { threshold: [0, 0.25] });
+    observer.observe(video);
+    return () => {
+      observer.disconnect();
+      quitarVideoPrevio(video);
+    };
+  }, [enableVideoAutoplay, esVideo, pin.imgUrl]);
+
+  function setHovered(hovered: boolean) {
+    const video = videoRef.current;
+    if (!enableVideoAutoplay) return;
+    videoHoveredRef.current = hovered;
+    if (video) actualizarVideoPrevia(video, videoVisibleRef.current, hovered);
+  }
 
   return (
     <div className="masonry-item" style={{ gridRowEnd: `span ${rowSpan}` }}>
       <div
         className={`pin-card${selectionMode ? " pin-card-selecting" : ""}${selectionMode && selected ? " pin-card-selected" : ""}`}
         onClick={() => selectionMode ? onToggleSelection?.(pin) : onPinClick(pin)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
       >
-        <img ref={imageRef} src={pin.imgUrl} alt={pin.title} style={{ width: "100%", display: "block", borderRadius: "16px" }} loading="lazy" />
+        {esVideo ? (
+          <video ref={videoRef} src={pin.imgUrl} muted playsInline loop preload="metadata" aria-label={pin.title} style={{ width: "100%", display: "block", borderRadius: "16px" }} />
+        ) : (
+          <img ref={imageRef} src={pin.imgUrl} alt={pin.title} style={{ width: "100%", display: "block", borderRadius: "16px" }} loading="lazy" />
+        )}
         <div className="overlay">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <span className={tagClass(pin.type)}>{pin.type}</span>

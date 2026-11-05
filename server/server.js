@@ -366,6 +366,7 @@ const dbp = db.promise();
 
 const CATEGORIAS = ['2D', '3D', 'Fotografía', 'Edición'];
 const MAX_UPLOAD_IMAGE_BYTES = 15 * 1024 * 1024;
+const MAX_UPLOAD_VIDEO_BYTES = 100 * 1024 * 1024;
 const MAX_UPLOAD_RESOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_MODEL_BYTES = 50 * 1024 * 1024;
 
@@ -375,6 +376,8 @@ const uploadStorage = {
     const destino = path.join(UPLOAD_TEMP_DIR, nombre);
     const maxBytes = ['recurso', 'modelo3d'].includes(file.fieldname)
       ? MAX_UPLOAD_RESOURCE_BYTES
+      : file.fieldname === 'medios' && file.mimetype === 'video/mp4'
+        ? MAX_UPLOAD_VIDEO_BYTES
       : MAX_UPLOAD_IMAGE_BYTES;
     const archivo = fs.createWriteStream(destino, { flags: 'wx' });
     let tamano = 0;
@@ -413,7 +416,7 @@ const uploadStorage = {
 const upload = multer({
   storage: uploadStorage,
   limits: {
-    fileSize: MAX_UPLOAD_RESOURCE_BYTES,
+    fileSize: MAX_UPLOAD_VIDEO_BYTES,
     files: 22,
     fields: 30,
     fieldSize: 1024 * 1024,
@@ -429,6 +432,12 @@ const upload = multer({
       return callback(null, true);
     }
     if (file.fieldname === 'recurso') return callback(null, true);
+    if (file.fieldname === 'medios' && file.mimetype === 'video/mp4') {
+      if (path.extname(file.originalname).toLowerCase() !== '.mp4') {
+        return callback(new Error('Formato de video no permitido (usa MP4)'));
+      }
+      return callback(null, true);
+    }
     if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype)) {
       return callback(new Error('Formato de imagen no permitido (usa JPG, PNG, WEBP o GIF)'));
     }
@@ -800,6 +809,72 @@ const guardarImagenProcesada = async (entrada, carpeta, maxDimension) => {
 
 const guardarImagenArchivo = (archivo, carpeta, maxDimension) =>
   guardarImagenProcesada(archivo.path, carpeta, maxDimension);
+
+const obtenerDuracionMp4 = async (ruta) => {
+  const buffer = await fs.promises.readFile(ruta);
+  if (buffer.indexOf('ftyp', 0, 'ascii') < 0) {
+    throw new Error('El archivo no contiene un encabezado MP4 válido.');
+  }
+
+  const buscarDuracion = (inicio, fin) => {
+    let offset = inicio;
+    while (offset + 8 <= fin) {
+      const tamano32 = buffer.readUInt32BE(offset);
+      const tipo = buffer.toString('ascii', offset + 4, offset + 8);
+      let encabezado = 8;
+      let tamano = tamano32;
+      if (tamano32 === 1) {
+        if (offset + 16 > fin) return null;
+        const tamano64 = buffer.readBigUInt64BE(offset + 8);
+        if (tamano64 > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+        tamano = Number(tamano64);
+        encabezado = 16;
+      } else if (tamano32 === 0) {
+        tamano = fin - offset;
+      }
+      if (tamano < encabezado || offset + tamano > fin) return null;
+
+      const contenido = offset + encabezado;
+      const finalCaja = offset + tamano;
+      if (tipo === 'mvhd') {
+        if (buffer[contenido] !== 0 && buffer[contenido] !== 1) return null;
+        if (contenido + 20 > finalCaja) return null;
+        const version = buffer[contenido];
+        const escalaOffset = contenido + (version === 1 ? 20 : 12);
+        const duracionOffset = escalaOffset + 4;
+        if (duracionOffset + (version === 1 ? 8 : 4) > finalCaja) return null;
+        const escala = buffer.readUInt32BE(escalaOffset);
+        const ticks = version === 1
+          ? Number(buffer.readBigUInt64BE(duracionOffset))
+          : buffer.readUInt32BE(duracionOffset);
+        return escala > 0 ? ticks / escala : null;
+      }
+      if (tipo === 'moov') {
+        const duracion = buscarDuracion(contenido, finalCaja);
+        if (duracion !== null) return duracion;
+      }
+      offset = finalCaja;
+    }
+    return null;
+  };
+
+  const duracion = buscarDuracion(0, buffer.length);
+  if (!Number.isFinite(duracion) || duracion <= 0) {
+    throw new Error('El MP4 no contiene una duración válida.');
+  }
+  if (duracion > 60) {
+    throw new Error('Los videos no pueden durar más de 1 minuto.');
+  }
+  return duracion;
+};
+
+const guardarVideoArchivo = async (archivo, carpeta) => {
+  await obtenerDuracionMp4(archivo.path);
+  const nombre = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.mp4`;
+  const destino = path.join(UPLOADS_DIR, carpeta, nombre);
+  await fs.promises.copyFile(archivo.path, destino);
+  return `/uploads/${carpeta}/${nombre}`;
+};
 
 const guardarImagenDataUrl = async (dataUrl, carpeta, maxDimension) => {
   const coincidencia = /^data:image\/(?:jpeg|png|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(dataUrl || '');
@@ -1594,7 +1669,7 @@ app.put('/api/perfil/:usuarioId', upload.single('avatar'), limpiarTemporalesCarg
   }
 });
 
-// POST publicación: guarda las imágenes en disco y llama al stored procedure
+// POST publicación: guarda imágenes y videos en disco y llama al stored procedure
 app.post('/api/publicaciones', upload.fields([
   { name: 'medios', maxCount: 20 },
   { name: 'recurso', maxCount: 1 },
@@ -1606,7 +1681,7 @@ app.post('/api/publicaciones', upload.fields([
   const etiquetas = parseJson(req.body.etiquetas);
   const recurso = parseJson(req.body.recurso);
   const medios = parseJson(req.body.medios) || req.body.medios;
-  const archivosImagen = req.files?.medios || [];
+  const archivosMedios = req.files?.medios || [];
   const archivoRecurso = req.files?.recurso?.[0];
   const archivoModelo3d = req.files?.modelo3d?.[0];
 
@@ -1623,9 +1698,9 @@ app.post('/api/publicaciones', upload.fields([
   if (archivoModelo3d && categoria !== '3D') {
     return res.status(400).json({ error: 'Solo las publicaciones 3D pueden incluir un modelo GLB' });
   }
-  const cantidadImagenes = archivosImagen.length || (Array.isArray(medios) ? medios.length : 0);
-  if (cantidadImagenes < 1 || cantidadImagenes > 20) {
-    return res.status(400).json({ error: 'Debes subir entre 1 y 20 imágenes' });
+  const cantidadMedios = archivosMedios.length || (Array.isArray(medios) ? medios.length : 0);
+  if (cantidadMedios < 1 || cantidadMedios > 20) {
+    return res.status(400).json({ error: 'Debes subir entre 1 y 20 imágenes o videos' });
   }
 
   const tags = [];
@@ -1644,11 +1719,13 @@ app.post('/api/publicaciones', upload.fields([
   let recursoGuardado;
   let modelo3dGuardado;
   try {
-    const imagenes = archivosImagen.length ? archivosImagen : medios;
-    for (const imagen of imagenes) {
-      const ruta = imagen.path
-        ? await guardarImagenArchivo(imagen, 'publicaciones', 2560)
-        : await guardarImagenDataUrl(imagen, 'publicaciones', 2560);
+    const archivos = archivosMedios.length ? archivosMedios : medios;
+    for (const archivo of archivos) {
+      const ruta = archivo.path
+        ? archivo.mimetype === 'video/mp4'
+          ? await guardarVideoArchivo(archivo, 'publicaciones')
+          : await guardarImagenArchivo(archivo, 'publicaciones', 2560)
+        : await guardarImagenDataUrl(archivo, 'publicaciones', 2560);
       rutas.push(ruta);
       archivosSubidos.push(ruta);
     }
@@ -1753,7 +1830,7 @@ app.post('/api/publicaciones', upload.fields([
     if (err.errno === 1452) {
       return res.status(400).json({ error: 'El usuario no existe' });
     }
-    const esArchivo = /imagen|archivo|recurso|formato|pesa/i.test(err.message || '');
+    const esArchivo = /imagen|video|archivo|recurso|formato|pesa|mp4/i.test(err.message || '');
     res.status(esArchivo ? 400 : 500).json({ error: esArchivo ? err.message : 'Error al crear la publicación' });
   }
 });
@@ -1761,13 +1838,12 @@ app.post('/api/publicaciones', upload.fields([
 app.use((err, _req, res, next) => {
   if (res.headersSent) return next(err);
   if (err instanceof multer.MulterError) {
-    const limiteArchivo = ['recurso', 'modelo3d'].includes(err.field) ? '50 MB' : '15 MB';
     const error = err.code === 'LIMIT_FILE_SIZE'
-      ? `El archivo supera el límite permitido de ${limiteArchivo}`
+      ? 'El archivo supera el límite permitido (15 MB para imágenes, 100 MB para videos y 50 MB para recursos)'
       : 'La carga excede los límites permitidos';
     return res.status(400).json({ error });
   }
-  if (/^Formato de imagen|^Formato de modelo|^Formato de recurso|^Campo de archivo/.test(err.message || '')) {
+  if (/^Formato de imagen|^Formato de video|^Formato de modelo|^Formato de recurso|^Campo de archivo/.test(err.message || '')) {
     return res.status(400).json({ error: err.message });
   }
   console.error('Error al procesar la carga:', err);
