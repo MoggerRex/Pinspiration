@@ -558,7 +558,7 @@ app.get('/api/seguimientos/:seguidorId/:seguidoId', async (req, res) => {
 
   try {
     const [[row]] = await dbp.query(
-      'SELECT EXISTS(SELECT 1 FROM seguimientos WHERE seguidor_id = ? AND seguido_id = ?) AS siguiendo',
+      'SELECT fn_sigue_a(?, ?) AS siguiendo',
       [seguidorId, seguidoId]
     );
     res.json({ following: Boolean(row.siguiendo) });

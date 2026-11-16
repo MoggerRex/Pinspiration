@@ -73,8 +73,8 @@ export function Perfil({
     actor_nombre: string;
     actor_handle: string;
     actor_avatar: string;
-    publicacion_id: number | string;
-    publicacion_titulo: string;
+    publicacion_id: number | string | null;
+    publicacion_titulo: string | null;
     publicacion_img: string | null;
     mensaje: string;
   }[]>([]);
@@ -698,12 +698,24 @@ export function Perfil({
                   key={notification.notificacion_id}
                   role="button"
                   tabIndex={0}
-                  aria-label={`Abrir la publicación ${notification.publicacion_titulo}`}
-                  onClick={() => { void openNotificationPublication(notification.publicacion_id); }}
+                  aria-label={notification.publicacion_id
+                    ? `Abrir la publicación ${notification.publicacion_titulo || ""}`
+                    : `Ver perfil de ${notification.actor_nombre}`}
+                  onClick={() => {
+                    if (notification.publicacion_id) {
+                      void openNotificationPublication(notification.publicacion_id);
+                    } else {
+                      onSelectArtist(String(notification.actor_id));
+                    }
+                  }}
                   onKeyDown={(event) => {
                     if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
                       event.preventDefault();
-                      void openNotificationPublication(notification.publicacion_id);
+                      if (notification.publicacion_id) {
+                        void openNotificationPublication(notification.publicacion_id);
+                      } else {
+                        onSelectArtist(String(notification.actor_id));
+                      }
                     }
                   }}
                   onMouseEnter={() => setHoveredNotificationId(String(notification.notificacion_id))}
@@ -713,7 +725,9 @@ export function Perfil({
                   }}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "42px minmax(0, 1fr) 64px",
+                    gridTemplateColumns: notification.publicacion_img
+                      ? "42px minmax(0, 1fr) 64px"
+                      : "42px minmax(0, 1fr)",
                     alignItems: "center",
                     gap: 12,
                     padding: 12,
