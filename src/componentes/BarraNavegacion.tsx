@@ -80,12 +80,12 @@ export function BarraNavegacion({
               style={{
                 position: "absolute",
                 top: 4,
-                right: 6,
-                width: 9,
-                height: 9,
+                right: 1,
+                width: 8,
+                height: 8,
                 borderRadius: "50%",
-                background: "#00385a",
-                border: "2px solid #1a2228",
+                background: "#1a7abf",
+                border: "2px solid #13191d",
               }}
             />
           )}

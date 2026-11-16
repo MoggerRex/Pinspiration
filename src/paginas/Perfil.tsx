@@ -67,14 +67,20 @@ export function Perfil({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<{
     notificacion_id: number | string;
+    actor_id: number | string;
     leida: number | boolean;
     hace_cuanto: string;
     actor_nombre: string;
     actor_handle: string;
     actor_avatar: string;
+    publicacion_id: number | string;
+    publicacion_titulo: string;
     publicacion_img: string | null;
     mensaje: string;
   }[]>([]);
+  const [newNotificationIds, setNewNotificationIds] = useState<Set<string>>(new Set());
+  const [hoveredNotificationId, setHoveredNotificationId] = useState<string | null>(null);
+  const [hoveredNotificationActorId, setHoveredNotificationActorId] = useState<string | null>(null);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState("");
   const [returnToFollowList, setReturnToFollowList] = useState<{
@@ -171,9 +177,47 @@ export function Perfil({
 
   const isOwnProfile = profileId === currentUser?.id || String(profileId) === String(currentUser?.id) || profileId === "me";
 
+  async function openNotificationPublication(publicationId: number | string) {
+    const existingPin = allPins.find((pin) => String(pin.id) === String(publicationId));
+    if (existingPin) {
+      onPinClick(existingPin);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API}/api/publicaciones/${encodeURIComponent(String(publicationId))}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudo cargar la publicación");
+      if (!data.publicacion) throw new Error("La respuesta de la publicación no es válida");
+
+      const publication = data.publicacion;
+      const pin: Pin = {
+        id: String(publication.id),
+        artistId: String(publication.artistId),
+        title: publication.title,
+        description: publication.description,
+        type: publication.type,
+        tags: Array.isArray(publication.tags) ? publication.tags : [],
+        imgUrl: fullUrl(publication.imgUrl),
+        imgH: 1,
+        media: Array.isArray(publication.media) ? publication.media.map(fullUrl) : undefined,
+        resources: publication.resources,
+        model3d: publication.model3d,
+        publishedAt: publication.publishedAt,
+        likes: Number(publication.likes) || 0,
+        saves: Number(publication.saves) || 0,
+      };
+      onPinClick(pin);
+    } catch (error) {
+      console.error("Error al abrir la publicación desde una notificación:", error);
+      setNotificationsError(error instanceof Error ? error.message : "No se pudo cargar la publicación");
+    }
+  }
+
   async function toggleNotifications() {
     if (notificationsOpen) {
       setNotificationsOpen(false);
+      setNewNotificationIds(new Set());
       return;
     }
 
@@ -181,6 +225,7 @@ export function Perfil({
     setNotificationsLoading(true);
     setNotificationsError("");
     setSelectionMode(false);
+    setNewNotificationIds(new Set());
 
     try {
       const response = await fetch(`${API}/api/notificaciones/${encodeURIComponent(String(currentUser.id))}`);
@@ -188,6 +233,11 @@ export function Perfil({
       if (!response.ok) throw new Error(data.error || "No se pudieron cargar las notificaciones");
       if (!Array.isArray(data)) throw new Error("La respuesta de notificaciones no es válida");
       setNotifications(data);
+      setNewNotificationIds(new Set(
+        data
+          .filter((notification: { leida: number | boolean }) => !notification.leida)
+          .map((notification: { notificacion_id: number | string }) => String(notification.notificacion_id))
+      ));
 
       const readResponse = await fetch(
         `${API}/api/notificaciones/${encodeURIComponent(String(currentUser.id))}/leer`,
@@ -626,7 +676,7 @@ export function Perfil({
             </h2>
             <button
               type="button"
-              onClick={() => setNotificationsOpen(false)}
+              onClick={toggleNotifications}
               className="cat-pill"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
             >
@@ -646,6 +696,21 @@ export function Perfil({
               {notifications.map((notification) => (
                 <article
                   key={notification.notificacion_id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Abrir la publicación ${notification.publicacion_titulo}`}
+                  onClick={() => { void openNotificationPublication(notification.publicacion_id); }}
+                  onKeyDown={(event) => {
+                    if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault();
+                      void openNotificationPublication(notification.publicacion_id);
+                    }
+                  }}
+                  onMouseEnter={() => setHoveredNotificationId(String(notification.notificacion_id))}
+                  onMouseLeave={() => {
+                    setHoveredNotificationId(null);
+                    setHoveredNotificationActorId(null);
+                  }}
                   style={{
                     display: "grid",
                     gridTemplateColumns: "42px minmax(0, 1fr) 64px",
@@ -653,41 +718,123 @@ export function Perfil({
                     gap: 12,
                     padding: 12,
                     borderRadius: 14,
-                    border: "1px solid #242f38",
+                    border: `1px solid ${hoveredNotificationId === String(notification.notificacion_id) ? "#1a7abf" : "#242f38"}`,
                     background: notification.leida ? "#1a2228" : "#1d2c35",
+                    cursor: "pointer",
+                    transition: "border-color 0.18s ease",
                   }}
                 >
-                  <img
-                    src={fullUrl(notification.actor_avatar)}
-                    alt={notification.actor_nombre}
-                    style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover" }}
-                  />
+                  <button
+                    type="button"
+                    aria-label={`Ver perfil de ${notification.actor_nombre}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelectArtist(String(notification.actor_id));
+                    }}
+                    onMouseEnter={() => setHoveredNotificationActorId(String(notification.notificacion_id))}
+                    onMouseLeave={() => setHoveredNotificationActorId(null)}
+                    style={{
+                      width: 42,
+                      height: 42,
+                      padding: 0,
+                      border: 0,
+                      borderRadius: "50%",
+                      background: "none",
+                      cursor: "pointer",
+                      transform: hoveredNotificationActorId === String(notification.notificacion_id) ? "scale(1.08)" : "scale(1)",
+                      transition: "transform 0.18s ease",
+                    }}
+                  >
+                    <img
+                      src={fullUrl(notification.actor_avatar)}
+                      alt=""
+                      style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover" }}
+                    />
+                  </button>
                   <div style={{ minWidth: 0 }}>
                     <p style={{ margin: "0 0 5px", color: "#e8eef2", fontSize: 14, lineHeight: 1.4 }}>
-                      {notification.mensaje}
+                      {notification.mensaje.startsWith(notification.actor_nombre) ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSelectArtist(String(notification.actor_id));
+                            }}
+                            onMouseEnter={() => setHoveredNotificationActorId(String(notification.notificacion_id))}
+                            onMouseLeave={() => setHoveredNotificationActorId(null)}
+                            style={{
+                              padding: 0,
+                              border: 0,
+                              background: "none",
+                              color: hoveredNotificationActorId === String(notification.notificacion_id) ? "#1a7abf" : "#e8eef2",
+                              font: "inherit",
+                              cursor: "pointer",
+                              transition: "color 0.18s ease",
+                            }}
+                          >
+                            {notification.actor_nombre}
+                          </button>
+                          {notification.mensaje.slice(notification.actor_nombre.length)}
+                        </>
+                      ) : notification.mensaje}
                     </p>
-                    <span style={{ color: "#7a909f", fontSize: 12 }}>{notification.hace_cuanto}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ color: "#7a909f", fontSize: 12 }}>{notification.hace_cuanto}</span>
+                      {newNotificationIds.has(String(notification.notificacion_id)) && (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            color: "#1a7abf",
+                            fontSize: 12,
+                            fontWeight: 600,
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{ width: 7, height: 7, borderRadius: "50%", background: "#1a7abf" }}
+                          />
+                          Nueva
+                        </span>
+                      )}
+                    </div>
                   </div>
                   {notification.publicacion_img && (
-                    esVideoMedia(notification.publicacion_img) ? (
-                      <video
-                        src={fullUrl(notification.publicacion_img)}
-                        muted
-                        playsInline
-                        preload="metadata"
-                        onLoadedMetadata={(event) => {
-                          event.currentTarget.currentTime = Math.min(0.05, event.currentTarget.duration / 2);
-                        }}
-                        aria-label="Miniatura del video de la publicación"
-                        style={{ width: 64, height: 54, borderRadius: 9, objectFit: "cover" }}
-                      />
-                    ) : (
-                      <img
-                        src={fullUrl(notification.publicacion_img)}
-                        alt=""
-                        style={{ width: 64, height: 54, borderRadius: 9, objectFit: "cover" }}
-                      />
-                    )
+                    <div style={{ width: 64, height: 54, borderRadius: 9, overflow: "hidden" }}>
+                      {esVideoMedia(notification.publicacion_img) ? (
+                        <video
+                          src={fullUrl(notification.publicacion_img)}
+                          muted
+                          playsInline
+                          preload="metadata"
+                          onLoadedMetadata={(event) => {
+                            event.currentTarget.currentTime = Math.min(0.05, event.currentTarget.duration / 2);
+                          }}
+                          aria-label="Miniatura del video de la publicación"
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                            transform: hoveredNotificationId === String(notification.notificacion_id) ? "scale(1.08)" : "scale(1)",
+                            transition: "transform 0.18s ease",
+                          }}
+                        />
+                      ) : (
+                        <img
+                          src={fullUrl(notification.publicacion_img)}
+                          alt=""
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                            transform: hoveredNotificationId === String(notification.notificacion_id) ? "scale(1.08)" : "scale(1)",
+                            transition: "transform 0.18s ease",
+                          }}
+                        />
+                      )}
+                    </div>
                   )}
                 </article>
               ))}
