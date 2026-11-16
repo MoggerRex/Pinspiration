@@ -35,7 +35,13 @@ export function TarjetaPin({
   const videoVisibleRef = useRef(false);
   const videoHoveredRef = useRef(false);
   const [rowSpan, setRowSpan] = useState(1);
+  const [isCardHovered, setIsCardHovered] = useState(false);
   const esVideo = esVideoMedia(pin.imgUrl);
+  const publishedAtTime = pin.publishedAtISO ? Date.parse(pin.publishedAtISO) : Number.NaN;
+  const ageSincePublished = Date.now() - publishedAtTime;
+  const isRecent = Number.isFinite(publishedAtTime)
+    && ageSincePublished >= 0
+    && ageSincePublished <= 14 * 24 * 60 * 60 * 1000;
 
   useEffect(() => {
     const media = esVideo ? videoRef.current : imageRef.current;
@@ -80,8 +86,14 @@ export function TarjetaPin({
       <div
         className={`pin-card${selectionMode ? " pin-card-selecting" : ""}${selectionMode && selected ? " pin-card-selected" : ""}`}
         onClick={() => selectionMode ? onToggleSelection?.(pin) : onPinClick(pin)}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseEnter={() => {
+          setIsCardHovered(true);
+          setHovered(true);
+        }}
+        onMouseLeave={() => {
+          setIsCardHovered(false);
+          setHovered(false);
+        }}
       >
         {esVideo ? (
           <video ref={videoRef} src={pin.imgUrl} muted playsInline loop preload="metadata" aria-label={pin.title} style={{ width: "100%", display: "block", borderRadius: "16px" }} />
@@ -140,6 +152,24 @@ export function TarjetaPin({
             </button>
           </div>
         </div>
+        {pin.publishedAt && (isCardHovered || isRecent) && (
+          <span
+            style={{
+              position: "absolute",
+              right: 10,
+              bottom: 10,
+              zIndex: 1,
+              padding: "4px 7px",
+              borderRadius: 8,
+              background: "rgba(19, 25, 29, 0.78)",
+              color: "#e8eef2",
+              fontSize: 10,
+              pointerEvents: "none",
+            }}
+          >
+            {pin.publishedAt}
+          </span>
+        )}
       </div>
     </div>
   );

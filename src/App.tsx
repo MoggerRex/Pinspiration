@@ -44,6 +44,7 @@ export default function App() {
     resolve: (accepted: boolean) => void;
   } | null>(null);
   const [savedNotif, setSavedNotif] = useState<string | null>(null);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [savedPublicationIds, setSavedPublicationIds] = useState<Set<string>>(new Set());
   const [savedPublicationCounts, setSavedPublicationCounts] = useState<Record<string, number>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -312,6 +313,32 @@ export default function App() {
         if (err.name !== "AbortError") console.error("Error al cargar artistas seguidos:", err);
       });
     return () => controller.abort();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setUnreadNotificationsCount(0);
+      return;
+    }
+
+    let active = true;
+    const cargarNotificacionesNoLeidas = async () => {
+      try {
+        const res = await fetch(`${API}/api/notificaciones/${encodeURIComponent(String(user.id))}/no-leidas`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudieron consultar las notificaciones");
+        if (active) setUnreadNotificationsCount(Number(data.noLeidas) || 0);
+      } catch (err) {
+        console.error("Error al consultar notificaciones no leídas:", err);
+      }
+    };
+
+    cargarNotificacionesNoLeidas();
+    const intervalId = window.setInterval(cargarNotificacionesNoLeidas, 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
   }, [user?.id]);
 
   // Al abrir el perfil de un artista: cargar sus publicaciones
@@ -681,6 +708,7 @@ export default function App() {
           localStorage.setItem("opcionFeed", mode);
         }}
         onHamburger={() => setDrawerOpen(true)}
+        unreadNotificationsCount={unreadNotificationsCount}
       />
 
       <MenuHamburguesa
@@ -819,6 +847,8 @@ export default function App() {
           profileId={profileId}
           allPins={allPins}
           currentUser={user}
+          unreadNotificationsCount={unreadNotificationsCount}
+          onNotificationsRead={() => setUnreadNotificationsCount(0)}
           artists={artists}
           isFollowing={profileId ? followedArtistIds.has(String(profileId)) : false}
           onToggleFollow={handleToggleFollow}

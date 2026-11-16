@@ -113,9 +113,9 @@ const mapFeedPin = (r) => {
     imgUrl: r.img_url || '',
     media: r.img_url ? [r.img_url] : [],
     imgH: 400,
-    publishedAt: fecha
+    publishedAt: r.publicado_hace || (fecha
       ? new Date(fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
-      : undefined,
+      : undefined),
     publishedAtISO: fecha ? new Date(fecha).toISOString() : undefined,
     tags: r.etiquetas ? r.etiquetas.split(',').filter(Boolean) : [],
     likes: Number(r.total_me_gusta) || 0,
@@ -129,7 +129,8 @@ const mapFeedPin = (r) => {
 app.get('/api/feed', async (req, res) => {
   try {
     const [rows] = await dbp.query(`
-      SELECT * FROM vista_feed_publicaciones
+      SELECT f.*, fn_hace_cuanto(COALESCE(f.published_at, f.created_at)) AS publicado_hace
+      FROM vista_feed_publicaciones f
       ORDER BY COALESCE(published_at, created_at) DESC, publicacion_pk DESC
     `);
 
@@ -467,6 +468,57 @@ const parseUsuarioId = (value) => {
   return Number.isInteger(id) && id > 0 ? id : null;
 };
 
+app.get('/api/notificaciones/:usuarioId/no-leidas', async (req, res) => {
+  const usuarioId = parseUsuarioId(req.params.usuarioId);
+  if (!usuarioId) return res.status(400).json({ error: 'ID de usuario inválido' });
+
+  try {
+    const [[row]] = await dbp.query(
+      'SELECT COUNT(*) AS no_leidas FROM notificaciones WHERE usuario_id = ? AND leida = 0',
+      [usuarioId]
+    );
+    res.json({ noLeidas: Number(row.no_leidas) || 0 });
+  } catch (err) {
+    console.error('Error al contar notificaciones no leídas:', err);
+    res.status(500).json({ error: 'Error al consultar notificaciones' });
+  }
+});
+
+app.get('/api/notificaciones/:usuarioId', async (req, res) => {
+  const usuarioId = parseUsuarioId(req.params.usuarioId);
+  if (!usuarioId) return res.status(400).json({ error: 'ID de usuario inválido' });
+
+  try {
+    const [rows] = await dbp.query(
+      `SELECT * FROM vista_notificaciones_usuario
+       WHERE usuario_id = ?
+       ORDER BY created_at DESC, notificacion_id DESC
+       LIMIT 100`,
+      [usuarioId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error al consultar notificaciones:', err);
+    res.status(500).json({ error: 'Error al consultar notificaciones' });
+  }
+});
+
+app.put('/api/notificaciones/:usuarioId/leer', async (req, res) => {
+  const usuarioId = parseUsuarioId(req.params.usuarioId);
+  if (!usuarioId) return res.status(400).json({ error: 'ID de usuario inválido' });
+
+  try {
+    await dbp.query(
+      'UPDATE notificaciones SET leida = 1 WHERE usuario_id = ? AND leida = 0',
+      [usuarioId]
+    );
+    res.json({ mensaje: 'Notificaciones marcadas como leídas' });
+  } catch (err) {
+    console.error('Error al marcar notificaciones como leídas:', err);
+    res.status(500).json({ error: 'Error al actualizar notificaciones' });
+  }
+});
+
 app.get('/api/usuarios/:usuarioId/seguidores', async (req, res) => {
   const usuarioId = parseUsuarioId(req.params.usuarioId);
   if (!usuarioId) return res.status(400).json({ error: 'ID de usuario inválido' });
@@ -638,7 +690,7 @@ app.get('/api/feed/siguiendo/:usuarioId', async (req, res) => {
 
   try {
     const [rows] = await dbp.query(
-      `SELECT f.*
+      `SELECT f.*, fn_hace_cuanto(COALESCE(f.published_at, f.created_at)) AS publicado_hace
        FROM vista_feed_publicaciones f
        JOIN seguimientos s ON s.seguido_id = f.artista_id
        WHERE s.seguidor_id = ?
@@ -695,6 +747,7 @@ app.get('/api/feed/para-ti/:usuarioId', async (req, res) => {
            SELECT tipo, valor FROM preferencias_usuario WHERE usuario_id = ?
          )
          SELECT f.*,
+           fn_hace_cuanto(COALESCE(f.published_at, f.created_at)) AS publicado_hace,
            (
              COALESCE((SELECT ac.puntuacion FROM afinidad_categoria ac WHERE ac.categoria = f.categoria), 0)
              + COALESCE((
@@ -1351,13 +1404,16 @@ app.get('/api/publicaciones/:id', async (req, res) => {
     let rows;
     if (/^\d+$/.test(idParam)) {
       [rows] = await dbp.query(
-        'SELECT * FROM vista_detalle_publicacion WHERE publicacion_id = ?',
+        `SELECT v.*, fn_hace_cuanto(COALESCE(v.published_at, v.created_at)) AS publicado_hace
+         FROM vista_detalle_publicacion v
+         WHERE v.publicacion_id = ?`,
         [Number(idParam)]
       );
     } else {
       [rows] = await dbp.query(
-        `SELECT * FROM vista_detalle_publicacion
-         WHERE publicacion_id = (SELECT id FROM publicaciones WHERE codigo_externo = ?)`,
+        `SELECT v.*, fn_hace_cuanto(COALESCE(v.published_at, v.created_at)) AS publicado_hace
+         FROM vista_detalle_publicacion v
+         WHERE v.publicacion_id = (SELECT id FROM publicaciones WHERE codigo_externo = ?)`,
         [idParam]
       );
     }
@@ -1413,9 +1469,7 @@ app.get('/api/publicaciones/:id', async (req, res) => {
         model3d: modelo3d
           ? { name: modelo3d.nombre, url: `/api/recursos/${modelo3d.id}?preview=1` }
           : undefined,
-        publishedAt: r.published_at
-          ? new Date(r.published_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
-          : undefined,
+        publishedAt: r.publicado_hace || undefined,
         likes: Number(r.total_me_gusta) || 0,
         saves: Number(r.total_guardados) || 0,
         comments: Number(r.total_comentarios) || 0,
@@ -1545,7 +1599,13 @@ app.get('/api/perfil/:usuarioId', async (req, res) => {
 
   try {
     const [rows] = await dbp.query(
-      'SELECT * FROM vista_perfil_usuario WHERE usuario_id = ? ORDER BY published_at DESC, publicacion_pk DESC',
+      `SELECT v.*,
+              COALESCE(v.published_at, p.created_at) AS publicado_at,
+              fn_hace_cuanto(COALESCE(v.published_at, p.created_at)) AS publicado_hace
+       FROM vista_perfil_usuario v
+       LEFT JOIN publicaciones p ON p.id = v.publicacion_pk
+       WHERE v.usuario_id = ?
+       ORDER BY v.published_at DESC, v.publicacion_pk DESC`,
       [id]
     );
     if (rows.length === 0) {
@@ -1578,9 +1638,8 @@ app.get('/api/perfil/:usuarioId', async (req, res) => {
           software: r.software || undefined,
           exif: r.categoria === 'Fotografía' ? armarExif(r) : undefined,
           palette: parseJson(r.paleta_colores) || undefined,
-          publishedAt: r.published_at
-            ? new Date(r.published_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })
-            : undefined,
+          publishedAt: r.publicado_hace || undefined,
+          publishedAtISO: r.publicado_at ? new Date(r.publicado_at).toISOString() : undefined,
           tags: r.etiquetas ? r.etiquetas.split(',') : [],
           imgUrl: media[0] || '',
           media,

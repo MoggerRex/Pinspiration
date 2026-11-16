@@ -1478,7 +1478,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
 
                 {pin.publishedAt && (
                   <span style={{ fontSize: 11, color: "#5d7382", marginTop: 2 }}>
-                    Publicado el {pin.publishedAt}
+                    Publicado {pin.publishedAt.startsWith("hace") ? pin.publishedAt : `el ${pin.publishedAt}`}
                   </span>
                 )}
               </button>
@@ -1646,7 +1646,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
             {pin.publishedAt && (
               <div style={{ paddingTop: 16, borderTop: "1px solid #242f38" }}>
                 <span style={{ fontSize: 13, color: "#7a909f", fontWeight: 500 }}>
-                  Publicado el {pin.publishedAt}
+                  Publicado {pin.publishedAt.startsWith("hace") ? pin.publishedAt : `el ${pin.publishedAt}`}
                 </span>
               </div>
             )}

@@ -17,6 +17,7 @@ interface BarraNavegacionProps {
   feedMode: "Siguiendo" | "Para ti";
   onFeedMode: (mode: "Siguiendo" | "Para ti") => void;
   onHamburger: () => void;
+  unreadNotificationsCount: number;
 }
 
 export function BarraNavegacion({
@@ -31,6 +32,7 @@ export function BarraNavegacion({
   feedMode,
   onFeedMode,
   onHamburger,
+  unreadNotificationsCount,
 }: BarraNavegacionProps) {
   const [menuAbierto, setMenuAbierto] = useState(false);
 
@@ -67,9 +69,26 @@ export function BarraNavegacion({
           className={`boton-nav nav-item-perfil ${view === "profile" ? "active" : ""}`}
           onClick={() => onView("profile")}
           aria-label="Perfil"
+          style={{ position: "relative" }}
         >
           <IconUser />
           <span className="nav-text-label">Perfil</span>
+          {unreadNotificationsCount > 0 && (
+            <span
+              className="notification-indicator"
+              aria-label={`${unreadNotificationsCount} notificaciones sin leer`}
+              style={{
+                position: "absolute",
+                top: 4,
+                right: 6,
+                width: 9,
+                height: 9,
+                borderRadius: "50%",
+                background: "#00385a",
+                border: "2px solid #1a2228",
+              }}
+            />
+          )}
         </button>
       </div>
 

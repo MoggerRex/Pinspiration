@@ -2,15 +2,18 @@ import { useEffect, useState } from "react";
 import type { Artist, Pin } from "../tipos";
 import { formatNum } from "../ayudantes";
 import { TarjetaPin } from "../componentes/TarjetaPin";
-import { ArrowLeft, Bookmark, UserRoundPlus, Pencil, X, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, Bell, Bookmark, UserRoundPlus, Pencil, X, Trash2, Upload } from "lucide-react";
 import { HexColorPicker } from "react-colorful";
 import { API, fullUrl } from "../api";
 import { optimizarImagen } from "../utilidadesCargaImagen";
+import { esVideoMedia } from "../utilidadesVideo";
 
 interface PerfilProps {
   profileId: string | null;
   allPins: Pin[];
   currentUser: any;
+  unreadNotificationsCount: number;
+  onNotificationsRead: () => void;
   artists: Artist[];
   onUpdateUser: (updatedData: any) => void;
   onBack: () => void;
@@ -27,6 +30,8 @@ export function Perfil({
   profileId,
   allPins,
   currentUser,
+  unreadNotificationsCount,
+  onNotificationsRead,
   artists,
   onUpdateUser,
   onBack,
@@ -59,6 +64,19 @@ export function Perfil({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPublicationIds, setSelectedPublicationIds] = useState<Set<string>>(new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<{
+    notificacion_id: number | string;
+    leida: number | boolean;
+    hace_cuanto: string;
+    actor_nombre: string;
+    actor_handle: string;
+    actor_avatar: string;
+    publicacion_img: string | null;
+    mensaje: string;
+  }[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState("");
   const [returnToFollowList, setReturnToFollowList] = useState<{
     profileId: string;
     type: "seguidores" | "seguidos";
@@ -148,9 +166,44 @@ export function Perfil({
   useEffect(() => {
     setSelectionMode(false);
     setSelectedPublicationIds(new Set());
+    setNotificationsOpen(false);
   }, [profileId]);
 
   const isOwnProfile = profileId === currentUser?.id || String(profileId) === String(currentUser?.id) || profileId === "me";
+
+  async function toggleNotifications() {
+    if (notificationsOpen) {
+      setNotificationsOpen(false);
+      return;
+    }
+
+    setNotificationsOpen(true);
+    setNotificationsLoading(true);
+    setNotificationsError("");
+    setSelectionMode(false);
+
+    try {
+      const response = await fetch(`${API}/api/notificaciones/${encodeURIComponent(String(currentUser.id))}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No se pudieron cargar las notificaciones");
+      if (!Array.isArray(data)) throw new Error("La respuesta de notificaciones no es válida");
+      setNotifications(data);
+
+      const readResponse = await fetch(
+        `${API}/api/notificaciones/${encodeURIComponent(String(currentUser.id))}/leer`,
+        { method: "PUT" }
+      );
+      const readData = await readResponse.json();
+      if (!readResponse.ok) throw new Error(readData.error || "No se pudieron marcar como leídas");
+      setNotifications((previous) => previous.map((notification) => ({ ...notification, leida: 1 })));
+      onNotificationsRead();
+    } catch (error) {
+      console.error("Error al abrir notificaciones:", error);
+      setNotificationsError(error instanceof Error ? error.message : "No se pudieron cargar las notificaciones");
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }
 
   if (!profileId) {
     return (
@@ -488,22 +541,62 @@ export function Perfil({
 
         {/* 5. Botón de editar perfil ubicado al extremo izquierdo dentro de contenedor tipo píldora */}
         {isOwnProfile ? (
-          <button
-            onClick={handleOpenEdit}
-            className="cat-pill"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "8px 16px",
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
-          >
-            <Pencil size={15} />
-            <span>Editar perfil</span>
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={handleOpenEdit}
+              className="cat-pill"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 16px",
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              <Pencil size={15} />
+              <span>Editar perfil</span>
+            </button>
+            <button
+              type="button"
+              onClick={toggleNotifications}
+              className="cat-pill"
+              aria-expanded={notificationsOpen}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 16px",
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              <Bell size={15} />
+              <span>Notificaciones</span>
+              {unreadNotificationsCount > 0 && (
+                <span
+                  style={{
+                    minWidth: 18,
+                    height: 18,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "0 5px",
+                    borderRadius: 10,
+                    background: "#00385a",
+                    border: "1px solid #1a7abf",
+                    color: "#fff",
+                    fontSize: 10,
+                    fontWeight: 700,
+                  }}
+                >
+                  {unreadNotificationsCount > 99 ? "+100" : unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+          </div>
         ) : /^\d+$/.test(String(artist.id)) ? (
           <button
             onClick={() => onToggleFollow(String(artist.id), !isFollowing)}
@@ -525,60 +618,137 @@ export function Perfil({
         <div style={{ height: 1, background: "#242f38", marginTop: 16 }} />
       </div>
 
-      {/* Grid de Publicaciones */}
-      <div style={{ width: "100%", padding: `16px 20px ${selectionMode ? 116 : 60}px`, boxSizing: "border-box" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <h3 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 20, color: "#e8eef2", fontWeight: 600 }}>
-            Publicaciones
-          </h3>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {isOwnProfile && (
-              <button
-                type="button"
-                onClick={selectionMode ? cancelSelection : () => setSelectionMode(true)}
-                className="cat-pill"
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
-              >
-                {selectionMode && <X size={16} />}
-                <span>{selectionMode ? "Cancelar" : "Seleccionar"}</span>
-              </button>
-            )}
+      {notificationsOpen ? (
+        <section style={{ width: "100%", maxWidth: 760, margin: "0 auto", padding: "20px", boxSizing: "border-box" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+            <h2 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 22, color: "#e8eef2" }}>
+              Notificaciones
+            </h2>
             <button
-              onClick={handleProfileBack}
+              type="button"
+              onClick={() => setNotificationsOpen(false)}
               className="cat-pill"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
             >
               <ArrowLeft size={16} />
-              <span>Volver</span>
+              <span>Volver a publicaciones</span>
             </button>
           </div>
-        </div>
 
-        {profilePinsLoading && /^\d+$/.test(String(profileId)) ? (
-          <p style={{ color: "#7a909f", textAlign: "center", padding: "60px 0" }}>Cargando publicaciones…</p>
-        ) : profilePinsError && /^\d+$/.test(String(profileId)) ? (
-          <p role="alert" style={{ color: "#ff8a8a", textAlign: "center", padding: "60px 0" }}>{profilePinsError}</p>
-        ) : pins.length === 0 ? (
-          <p style={{ color: "#7a909f", textAlign: "center", padding: "60px 0" }}>No hay pines aún.</p>
-        ) : (
-          <div className="masonry-grid">
-            {pins.map((pin) => (
-              <TarjetaPin
-                key={pin.id}
-                pin={pin}
-                artist={isOwnProfile ? artist : artistMap[pin.artistId]}
-                onSave={onSave}
-                onArtist={() => {}}
-                onPinClick={onPinClick}
-                selectionMode={isOwnProfile && selectionMode}
-                selected={selectedPublicationIds.has(pin.id)}
-                onToggleSelection={togglePublicationSelection}
-              />
-            ))}
+          {notificationsLoading ? (
+            <p style={{ color: "#7a909f", textAlign: "center", padding: "48px 0" }}>Cargando notificaciones…</p>
+          ) : notificationsError ? (
+            <p role="alert" style={{ color: "#ff8a8a", padding: "24px 0" }}>{notificationsError}</p>
+          ) : notifications.length === 0 ? (
+            <p style={{ color: "#7a909f", textAlign: "center", padding: "48px 0" }}>No tienes notificaciones todavía.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {notifications.map((notification) => (
+                <article
+                  key={notification.notificacion_id}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "42px minmax(0, 1fr) 64px",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: 12,
+                    borderRadius: 14,
+                    border: "1px solid #242f38",
+                    background: notification.leida ? "#1a2228" : "#1d2c35",
+                  }}
+                >
+                  <img
+                    src={fullUrl(notification.actor_avatar)}
+                    alt={notification.actor_nombre}
+                    style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover" }}
+                  />
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ margin: "0 0 5px", color: "#e8eef2", fontSize: 14, lineHeight: 1.4 }}>
+                      {notification.mensaje}
+                    </p>
+                    <span style={{ color: "#7a909f", fontSize: 12 }}>{notification.hace_cuanto}</span>
+                  </div>
+                  {notification.publicacion_img && (
+                    esVideoMedia(notification.publicacion_img) ? (
+                      <video
+                        src={fullUrl(notification.publicacion_img)}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        onLoadedMetadata={(event) => {
+                          event.currentTarget.currentTime = Math.min(0.05, event.currentTarget.duration / 2);
+                        }}
+                        aria-label="Miniatura del video de la publicación"
+                        style={{ width: 64, height: 54, borderRadius: 9, objectFit: "cover" }}
+                      />
+                    ) : (
+                      <img
+                        src={fullUrl(notification.publicacion_img)}
+                        alt=""
+                        style={{ width: 64, height: 54, borderRadius: 9, objectFit: "cover" }}
+                      />
+                    )
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : (
+        <div style={{ width: "100%", padding: `16px 20px ${selectionMode ? 116 : 60}px`, boxSizing: "border-box" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+            <h3 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 20, color: "#e8eef2", fontWeight: 600 }}>
+              Publicaciones
+            </h3>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {isOwnProfile && (
+                <button
+                  type="button"
+                  onClick={selectionMode ? cancelSelection : () => setSelectionMode(true)}
+                  className="cat-pill"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+                >
+                  {selectionMode && <X size={16} />}
+                  <span>{selectionMode ? "Cancelar" : "Seleccionar"}</span>
+                </button>
+              )}
+              <button
+                onClick={handleProfileBack}
+                className="cat-pill"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+              >
+                <ArrowLeft size={16} />
+                <span>Volver</span>
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+
+          {profilePinsLoading && /^\d+$/.test(String(profileId)) ? (
+            <p style={{ color: "#7a909f", textAlign: "center", padding: "60px 0" }}>Cargando publicaciones…</p>
+          ) : profilePinsError && /^\d+$/.test(String(profileId)) ? (
+            <p role="alert" style={{ color: "#ff8a8a", textAlign: "center", padding: "60px 0" }}>{profilePinsError}</p>
+          ) : pins.length === 0 ? (
+            <p style={{ color: "#7a909f", textAlign: "center", padding: "60px 0" }}>No hay pines aún.</p>
+          ) : (
+            <div className="masonry-grid">
+              {pins.map((pin) => (
+                <TarjetaPin
+                  key={pin.id}
+                  pin={pin}
+                  artist={isOwnProfile ? artist : artistMap[pin.artistId]}
+                  onSave={onSave}
+                  onArtist={() => {}}
+                  onPinClick={onPinClick}
+                  selectionMode={isOwnProfile && selectionMode}
+                  selected={selectedPublicationIds.has(pin.id)}
+                  onToggleSelection={togglePublicationSelection}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {isOwnProfile && selectionMode && (
         <footer
