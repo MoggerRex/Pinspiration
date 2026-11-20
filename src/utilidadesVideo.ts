@@ -14,13 +14,17 @@ let previewOrder = 0;
 
 export function esVideoMedia(value: string | File): boolean {
   if (value instanceof File) {
-    return value.type === "video/mp4" || /\.mp4$/i.test(value.name);
+    return ["video/mp4", "video/quicktime"].includes(value.type) || /\.(mp4|mov)$/i.test(value.name);
   }
   try {
-    return /\.mp4$/i.test(new URL(value, window.location.href).pathname);
+    return /\.(mp4|mov)$/i.test(new URL(value, window.location.href).pathname);
   } catch {
-    return /\.mp4(?:$|[?#])/i.test(value);
+    return /\.(mp4|mov)(?:$|[?#])/i.test(value);
   }
+}
+
+export function esVideoQuickTime(file: File): boolean {
+  return file.type === "video/quicktime" && /\.mov$/i.test(file.name);
 }
 
 export function obtenerDuracionVideo(file: File): Promise<number> {
@@ -171,8 +175,10 @@ export function quitarVideoPrevio(element: HTMLVideoElement) {
 }
 
 export function validarArchivoVideo(file: File): string | null {
-  if (file.type !== "video/mp4" || !/\.mp4$/i.test(file.name)) {
-    return "Solo se aceptan videos MP4.";
+  const esMp4 = file.type === "video/mp4" && /\.mp4$/i.test(file.name);
+  const esMov = esVideoQuickTime(file);
+  if (!esMp4 && !esMov) {
+    return "Solo se aceptan videos MP4 o MOV de QuickTime.";
   }
   if (file.size === 0 || file.size > MAX_VIDEO_SIZE_BYTES) {
     return "Cada video debe pesar más de 0 y hasta 100 MB.";

@@ -8,7 +8,7 @@ import crypto from 'crypto';
 import multer from 'multer';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
-import { MAX_VIDEO_BYTES, optimizarVideo } from './utilidadesVideo.js';
+import { MAX_VIDEO_BYTES, optimizarVideo, verificarDuracionVideo } from './utilidadesVideo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
@@ -376,9 +376,14 @@ const uploadStorage = {
   _handleFile: (req, file, callback) => {
     const nombre = crypto.randomBytes(16).toString('hex');
     const destino = path.join(UPLOAD_TEMP_DIR, nombre);
+    const extension = path.extname(file.originalname).toLowerCase();
+    const esVideoMedio = file.fieldname === 'medios' && (
+      (file.mimetype === 'video/mp4' && extension === '.mp4')
+      || (file.mimetype === 'video/quicktime' && extension === '.mov')
+    );
     const maxBytes = ['recurso', 'modelo3d'].includes(file.fieldname)
       ? MAX_UPLOAD_RESOURCE_BYTES
-      : file.fieldname === 'medios' && file.mimetype === 'video/mp4'
+      : esVideoMedio
         ? MAX_UPLOAD_VIDEO_BYTES
       : MAX_UPLOAD_IMAGE_BYTES;
     const archivo = fs.createWriteStream(destino, { flags: 'wx' });
@@ -434,11 +439,17 @@ const upload = multer({
       return callback(null, true);
     }
     if (file.fieldname === 'recurso') return callback(null, true);
-    if (file.fieldname === 'medios' && file.mimetype === 'video/mp4') {
-      if (path.extname(file.originalname).toLowerCase() !== '.mp4') {
-        return callback(new Error('Formato de video no permitido (usa MP4)'));
+    if (file.fieldname === 'medios') {
+      const extension = path.extname(file.originalname).toLowerCase();
+      if (
+        (file.mimetype === 'video/mp4' && extension === '.mp4')
+        || (file.mimetype === 'video/quicktime' && extension === '.mov')
+      ) {
+        return callback(null, true);
       }
-      return callback(null, true);
+      if (file.mimetype.startsWith('video/') || ['.mp4', '.mov'].includes(extension)) {
+        return callback(new Error('Formato de video no permitido (usa MP4 o MOV de QuickTime)'));
+      }
     }
     if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype)) {
       return callback(new Error('Formato de imagen no permitido (usa JPG, PNG, WEBP o GIF)'));
@@ -864,71 +875,44 @@ const guardarImagenProcesada = async (entrada, carpeta, maxDimension) => {
 const guardarImagenArchivo = (archivo, carpeta, maxDimension) =>
   guardarImagenProcesada(archivo.path, carpeta, maxDimension);
 
-const obtenerDuracionMp4 = async (ruta) => {
-  const buffer = await fs.promises.readFile(ruta);
-  if (buffer.indexOf('ftyp', 0, 'ascii') < 0) {
-    throw new Error('El archivo no contiene un encabezado MP4 válido.');
-  }
-
-  const buscarDuracion = (inicio, fin) => {
-    let offset = inicio;
-    while (offset + 8 <= fin) {
-      const tamano32 = buffer.readUInt32BE(offset);
-      const tipo = buffer.toString('ascii', offset + 4, offset + 8);
-      let encabezado = 8;
-      let tamano = tamano32;
-      if (tamano32 === 1) {
-        if (offset + 16 > fin) return null;
-        const tamano64 = buffer.readBigUInt64BE(offset + 8);
-        if (tamano64 > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-        tamano = Number(tamano64);
-        encabezado = 16;
-      } else if (tamano32 === 0) {
-        tamano = fin - offset;
-      }
-      if (tamano < encabezado || offset + tamano > fin) return null;
-
-      const contenido = offset + encabezado;
-      const finalCaja = offset + tamano;
-      if (tipo === 'mvhd') {
-        if (buffer[contenido] !== 0 && buffer[contenido] !== 1) return null;
-        if (contenido + 20 > finalCaja) return null;
-        const version = buffer[contenido];
-        const escalaOffset = contenido + (version === 1 ? 20 : 12);
-        const duracionOffset = escalaOffset + 4;
-        if (duracionOffset + (version === 1 ? 8 : 4) > finalCaja) return null;
-        const escala = buffer.readUInt32BE(escalaOffset);
-        const ticks = version === 1
-          ? Number(buffer.readBigUInt64BE(duracionOffset))
-          : buffer.readUInt32BE(duracionOffset);
-        return escala > 0 ? ticks / escala : null;
-      }
-      if (tipo === 'moov') {
-        const duracion = buscarDuracion(contenido, finalCaja);
-        if (duracion !== null) return duracion;
-      }
-      offset = finalCaja;
-    }
-    return null;
-  };
-
-  const duracion = buscarDuracion(0, buffer.length);
-  if (!Number.isFinite(duracion) || duracion <= 0) {
-    throw new Error('El MP4 no contiene una duración válida.');
-  }
-  if (duracion > 60) {
-    throw new Error('Los videos no pueden durar más de 1 minuto.');
-  }
-  return duracion;
-};
-
 const guardarVideoArchivo = async (archivo, carpeta) => {
-  await obtenerDuracionMp4(archivo.path);
+  await verificarDuracionVideo(archivo.path);
   const nombre = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.mp4`;
   const destino = path.join(UPLOADS_DIR, carpeta, nombre);
   await optimizarVideo(archivo.path, destino);
   return `/uploads/${carpeta}/${nombre}`;
 };
+
+app.post('/api/videos/convertir', upload.single('medios'), limpiarTemporalesCarga, async (req, res) => {
+  const archivo = req.file;
+  if (!archivo) return res.status(400).json({ error: 'Selecciona un video MP4 o MOV.' });
+
+  const rutaOptimizada = path.join(UPLOAD_TEMP_DIR, `${crypto.randomBytes(16).toString('hex')}.mp4`);
+  try {
+    await verificarDuracionVideo(archivo.path);
+    await optimizarVideo(archivo.path, rutaOptimizada);
+    res.type('video/mp4');
+    res.sendFile(rutaOptimizada, (error) => {
+      fs.promises.unlink(rutaOptimizada).catch((cleanupError) => {
+        if (cleanupError.code !== 'ENOENT') console.error('No se pudo limpiar el MP4 temporal:', cleanupError);
+      });
+      if (error) {
+        console.error('No se pudo enviar el video convertido:', error);
+        if (!res.headersSent) res.status(500).json({ error: 'No se pudo enviar el video convertido.' });
+      }
+    });
+  } catch (error) {
+    await fs.promises.unlink(rutaOptimizada).catch((cleanupError) => {
+      if (cleanupError.code !== 'ENOENT') console.error('No se pudo limpiar el MP4 temporal fallido:', cleanupError);
+    });
+    console.error('Error al convertir el video para moderación:', error);
+    const mensaje = error instanceof Error ? error.message : 'No se pudo convertir el video.';
+    const esArchivo = /video|mov|mp4|duración|supera|pesa/i.test(mensaje);
+    res.status(esArchivo ? 400 : 500).json({
+      error: esArchivo ? mensaje : 'No se pudo preparar el video para moderación.',
+    });
+  }
+});
 
 const guardarImagenDataUrl = async (dataUrl, carpeta, maxDimension) => {
   const coincidencia = /^data:image\/(?:jpeg|png|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(dataUrl || '');
@@ -1782,7 +1766,7 @@ app.post('/api/publicaciones', upload.fields([
     const archivos = archivosMedios.length ? archivosMedios : medios;
     for (const archivo of archivos) {
       const ruta = archivo.path
-        ? archivo.mimetype === 'video/mp4'
+        ? ['video/mp4', 'video/quicktime'].includes(archivo.mimetype)
           ? await guardarVideoArchivo(archivo, 'publicaciones')
           : await guardarImagenArchivo(archivo, 'publicaciones', 2560)
         : await guardarImagenDataUrl(archivo, 'publicaciones', 2560);

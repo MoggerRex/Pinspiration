@@ -3,7 +3,7 @@ import type { DragEvent } from "react";
 import type { Pin, PinType } from "../tipos";
 import { extractColors, mockExif } from "../utilidadesImagen";
 import { optimizarImagen } from "../utilidadesCargaImagen";
-import { esVideoMedia, extraerFotogramasVideo, obtenerDuracionVideo, validarArchivoVideo } from "../utilidadesVideo";
+import { esVideoMedia, esVideoQuickTime, extraerFotogramasVideo, obtenerDuracionVideo, validarArchivoVideo } from "../utilidadesVideo";
 import { IconCheck, IconImage, IconZap } from "../componentes/Iconos";
 import { ArrowLeft, Upload, FileCheck, Plus, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 
@@ -12,6 +12,24 @@ import { API, fullUrl } from "../api";
 
 const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY || "");
 type CrearStep = "upload" | "processing" | "ai" | "form" | "recursos" | "publishing" | "done";
+
+async function convertirVideoQuickTime(file: File): Promise<File> {
+  const formData = new FormData();
+  formData.append("medios", file, file.name);
+  const response = await fetch(`${API}/api/videos/convertir`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    const data = await response.json() as { error?: string };
+    throw new Error(data.error || "No se pudo convertir el video MOV.");
+  }
+
+  const video = await response.blob();
+  if (video.size === 0) throw new Error("El servidor devolvió un video convertido vacío.");
+  return new File([video], file.name.replace(/\.mov$/i, ".mp4"), { type: "video/mp4" });
+}
+
 interface CrearPublicacionProps {
   onBack: () => void;
   onPublish: (pin: Pin) => void;
@@ -42,6 +60,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   const [mediaList, setMediaList] = useState<string[]>([]);
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [uploadError, setUploadError] = useState("");
+  const [convirtiendoVideo, setConvirtiendoVideo] = useState(false);
   const mediaObjectUrls = useRef(new Set<string>());
   const [activeMediaIdx, setActiveMediaIdx] = useState(0);
   const [colors, setColors] = useState<string[]>([]);
@@ -114,6 +133,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   }, [activeMediaIdx, mediaList, mediaFiles]);
 
   async function handleFiles(files: FileList | File[]) {
+    if (convirtiendoVideo) return;
     const fileArr = Array.from(files);
     const availableSlots = 20 - mediaList.length;
     if (availableSlots <= 0) return;
@@ -121,17 +141,20 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
     const filesToProcess = fileArr.slice(0, availableSlots);
     const archivosOptimizados: File[] = [];
     const errores: string[] = [];
+    const contieneMov = filesToProcess.some(esVideoQuickTime);
+    if (contieneMov) setConvirtiendoVideo(true);
     try {
       for (const file of filesToProcess) {
-        if (file.type.startsWith("video/") || /\.mp4$/i.test(file.name)) {
+        if (file.type.startsWith("video/") || /\.(mp4|mov)$/i.test(file.name)) {
           const error = validarArchivoVideo(file);
           if (error) {
             errores.push(`${file.name}: ${error}`);
             continue;
           }
           try {
-            await obtenerDuracionVideo(file);
-            archivosOptimizados.push(file);
+            const video = esVideoQuickTime(file) ? await convertirVideoQuickTime(file) : file;
+            await obtenerDuracionVideo(video);
+            archivosOptimizados.push(video);
           } catch (error) {
             errores.push(`${file.name}: ${error instanceof Error ? error.message : "Video inválido."}`);
           }
@@ -153,6 +176,8 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
       }
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "No se pudo optimizar la imagen.");
+    } finally {
+      if (contieneMov) setConvirtiendoVideo(false);
     }
   }
 
@@ -911,7 +936,8 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               <input
                 type="file"
                 multiple
-                accept="image/*,video/mp4,.mp4"
+                accept="image/*,video/mp4,video/quicktime,.mp4,.mov"
+                disabled={convirtiendoVideo}
                 style={{ display: "none" }}
                 onChange={(e) => {
                   if (e.target.files) handleFiles(e.target.files);
@@ -1145,8 +1171,13 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               Selecciona tu imagen o video
             </h2>
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
-              Sube hasta 20 imágenes o videos. Las imágenes se optimizan; los MP4 de hasta 1 minuto y 100 MB se recodifican a H.264, máximo 1080p y calidad CRF 24. Si el resultado supera 100 MB, se reducen también a 30 FPS y audio AAC a 128 kbps.
+              Sube hasta 20 imágenes o videos. Los MOV de iPhone se convierten a MP4 antes de revisarlos; los videos de hasta 1 minuto y 100 MB se optimizan a H.264 (máximo 1080p, CRF 24). Si aún superan 100 MB, se reducen también a 30 FPS y AAC a 128 kbps.
             </p>
+            {convirtiendoVideo && (
+              <p role="status" style={{ color: "#7a909f", fontSize: 13, margin: "0 0 16px" }}>
+                Convirtiendo el MOV a MP4 compatible para revisarlo...
+              </p>
+            )}
             {uploadError && (
               <p role="alert" style={{ color: "#ff9b9b", fontSize: 13, margin: "0 0 16px" }}>
                 {uploadError}
@@ -1184,7 +1215,8 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                 <input
                   type="file"
                   multiple
-                  accept="image/*,video/mp4,.mp4"
+                  accept="image/*,video/mp4,video/quicktime,.mp4,.mov"
+                  disabled={convirtiendoVideo}
                   style={{ display: "none" }}
                   onChange={(e) => {
                     if (e.target.files) handleFiles(e.target.files);
@@ -1197,7 +1229,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
                   Arrastra tus archivos aquí o haz clic para subir
                   <br />
                   <span style={{ fontSize: 11, color: "#4a5e6a" }}>
-                    PNG, JPG, WEBP o MP4 (hasta 20 archivos; videos de hasta 1 minuto)
+                    PNG, JPG, WEBP, MP4 o MOV (hasta 20 archivos; videos de hasta 1 minuto)
                   </span>
                 </span>
               </label>
@@ -1207,7 +1239,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
 
             <button
               onClick={startProcessing}
-              disabled={mediaList.length === 0}
+              disabled={mediaList.length === 0 || convirtiendoVideo}
               className="btn-primary"
               style={{
                 marginTop: 20,
