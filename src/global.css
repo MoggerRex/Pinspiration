@@ -211,7 +211,7 @@ body {
 .app-shell[data-theme="light"] .crear-pin-flow button:hover:not(:disabled),
 .app-shell[data-theme="light"] .tag-pill-btn:hover {
   background: var(--color-surface-hover) !important;
-  border-color: #00385a !important;
+  border-color: #1a7abf !important;
   color: var(--color-text) !important;
   box-shadow: none !important;
 }
@@ -250,8 +250,8 @@ body {
 }
 
 .app-shell[data-theme="light"] .profile-notifications .profile-notification-action:hover:not(:disabled) {
-  background: transparent !important;
-  border-color: transparent !important;
+  background: var(--color-surface-hover) !important;
+  border-color: #1a7abf !important;
 }
 
 .app-shell[data-theme="light"] .profile-notifications .profile-notification-name:hover {
@@ -288,13 +288,13 @@ body {
 }
 
 .app-shell[data-theme="light"] .history-page .history-back-button:hover:not(:disabled) {
-  background: #00385a !important;
+  background: var(--color-surface-hover) !important;
   border-color: #1a7abf !important;
-  color: #ffffff !important;
+  color: var(--color-text) !important;
 }
 
 .app-shell[data-theme="light"] .history-page .history-back-button:hover:not(:disabled) * {
-  color: #ffffff !important;
+  color: var(--color-text) !important;
 }
 
 .app-shell[data-theme="light"] [style*="background: rgb(19, 25, 29)"],
@@ -334,7 +334,22 @@ body {
 }
 
 .app-shell[data-theme="light"] .pin-action-button:hover {
-  color: #ffffff !important;
+  color: var(--color-text) !important;
+}
+
+.app-shell[data-theme="light"] button:hover:not(:disabled) {
+  background: var(--color-surface-hover) !important;
+  border-color: #1a7abf !important;
+  color: var(--color-text) !important;
+}
+
+.app-shell[data-theme="light"] button:hover:not(:disabled) * {
+  color: var(--color-text) !important;
+}
+
+.app-shell[data-theme="light"] .pin-detail-img-wrap .pin-detail-nav-btn:hover {
+  background: var(--color-surface-hover) !important;
+  border-color: #1a7abf !important;
 }
 
 .app-shell[data-theme="light"] .pin-card .pin-info [style*="color: rgb(232, 238, 242)"],
