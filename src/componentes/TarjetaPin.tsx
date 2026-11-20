@@ -154,6 +154,7 @@ export function TarjetaPin({
         </div>
         {pin.publishedAt && (isCardHovered || isRecent) && (
           <span
+            className="pin-published-time"
             style={{
               position: "absolute",
               right: 10,

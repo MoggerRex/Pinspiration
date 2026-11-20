@@ -192,7 +192,24 @@ body {
 }
 
 .app-shell[data-theme="light"] .barra-navegacion {
-  background-color: rgba(255, 255, 255, 0.96);
+  background-color: var(--color-background);
+}
+
+.app-shell[data-theme="light"] .boton-nav:not(.active):hover,
+.app-shell[data-theme="light"] .cat-pill:not(.active):hover {
+  background: var(--color-surface-hover);
+}
+
+.app-shell[data-theme="light"] .tag-pill-btn {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.app-shell[data-theme="light"] .tag-pill-btn:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border);
+  color: var(--color-text);
 }
 
 .app-shell[data-theme="light"] [style*="background: rgb(19, 25, 29)"],
@@ -231,8 +248,17 @@ body {
   color: var(--color-muted) !important;
 }
 
+.app-shell[data-theme="light"] .pin-action-button:hover {
+  color: #ffffff !important;
+}
+
 .app-shell[data-theme="light"] .pin-card .pin-info [style*="color: rgb(232, 238, 242)"],
 .app-shell[data-theme="light"] .pin-card .pin-info [style*="color: rgb(176, 200, 216)"] {
+  color: #ffffff !important;
+}
+
+.app-shell[data-theme="light"] .pin-published-time {
+  background: rgba(19, 25, 29, 0.88) !important;
   color: #ffffff !important;
 }
 

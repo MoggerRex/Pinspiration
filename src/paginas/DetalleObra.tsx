@@ -1310,6 +1310,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
             {/* Fila de Botones: Guardar + Me gusta + Comentar */}
             <div style={{ display: "flex", gap: 10 }}>
               <button
+                className="pin-action-button"
                 onClick={handleToggleSaved}
                 disabled={interactionsLoading}
                 style={{
@@ -1347,6 +1348,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
               </button>
 
               <button
+                className="pin-action-button"
                 onClick={handleToggleLike}
                 disabled={interactionsLoading}
                 style={{
@@ -1385,6 +1387,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
 
               {/* Botón Comentar que abre el Pop-Up */}
               <button
+                className="pin-action-button"
                 onClick={() => setCommentsModalOpen(true)}
                 style={{
                   flex: 1,

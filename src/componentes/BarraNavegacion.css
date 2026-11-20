@@ -114,10 +114,15 @@
   background: transparent;
   border: none;
   outline: none;
-  color: #e8eef2;
+  color: var(--color-text);
   width: 100%;
   font-size: 14px;
   font-family: 'DM Sans', sans-serif;
+}
+
+.search-container input::placeholder {
+  color: var(--color-muted);
+  opacity: 1;
 }
 
 .nav-categorias {
