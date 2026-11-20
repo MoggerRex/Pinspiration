@@ -297,7 +297,7 @@ export function Perfil({
     return (
       <div role="status" style={{ textAlign: "center", padding: "72px 20px", color: "#7a909f" }}>
         <p>Este artista no está disponible.</p>
-        <button type="button" onClick={onBack}>Volver</button>
+        <button type="button" className="hover-seguimiento" onClick={onBack}>Volver</button>
       </div>
     );
   }
@@ -429,7 +429,7 @@ export function Perfil({
           <button
             type="button"
             onClick={() => setFollowListType(null)}
-            className="cat-pill"
+            className="cat-pill hover-seguimiento"
             style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 24 }}
           >
             <ArrowLeft size={16} />
@@ -594,7 +594,7 @@ export function Perfil({
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
             <button
               onClick={handleOpenEdit}
-              className="cat-pill"
+              className="cat-pill hover-seguimiento"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -611,7 +611,7 @@ export function Perfil({
             <button
               type="button"
               onClick={toggleNotifications}
-              className="cat-pill"
+              className="cat-pill hover-seguimiento"
               aria-expanded={notificationsOpen}
               style={{
                 display: "inline-flex",
@@ -669,7 +669,7 @@ export function Perfil({
       </div>
 
       {notificationsOpen ? (
-        <section style={{ width: "100%", maxWidth: 760, margin: "0 auto", padding: "20px", boxSizing: "border-box" }}>
+        <section className="profile-notifications" style={{ width: "100%", maxWidth: 760, margin: "0 auto", padding: "20px", boxSizing: "border-box" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
             <h2 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 22, color: "#e8eef2" }}>
               Notificaciones
@@ -677,7 +677,7 @@ export function Perfil({
             <button
               type="button"
               onClick={toggleNotifications}
-              className="cat-pill"
+              className="cat-pill hover-seguimiento"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
             >
               <ArrowLeft size={16} />
@@ -867,7 +867,7 @@ export function Perfil({
                 <button
                   type="button"
                   onClick={selectionMode ? cancelSelection : () => setSelectionMode(true)}
-                  className="cat-pill"
+                  className="cat-pill hover-seguimiento"
                   style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
                 >
                   {selectionMode && <X size={16} />}
@@ -876,7 +876,7 @@ export function Perfil({
               )}
               <button
                 onClick={handleProfileBack}
-                className="cat-pill"
+                className="cat-pill hover-seguimiento"
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
               >
                 <ArrowLeft size={16} />
@@ -912,7 +912,7 @@ export function Perfil({
       )}
 
       {isOwnProfile && selectionMode && (
-        <footer
+        <footer className="selection-actions"
           style={{
             position: "fixed",
             inset: "auto 0 0",
@@ -989,6 +989,7 @@ export function Perfil({
       {/* Modal de Edición de Perfil */}
       {isEditing && (
         <div
+          className="profile-edit-modal"
           style={{
             position: "fixed",
             inset: 0,
@@ -1186,7 +1187,7 @@ export function Perfil({
                   <button
                     type="button"
                     onClick={() => setColorSelectionMode("presets")}
-                    className="cat-pill"
+                    className="cat-pill hover-seguimiento"
                     style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}
                   >
                     <ArrowLeft size={16} />

@@ -1255,6 +1255,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                   </button>
                 )}
                 <button onClick={onBack}
+                  className="hover-seguimiento"
                   style={{ background: "#1a2228", border: "1px solid #242f38", borderRadius: 12, padding: "8px 14px", color: "#7a909f", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 14, display: "flex", alignItems: "center", gap: 6, transition: "color 0.15s, border-color 0.15s" }}
                   onMouseEnter={(e) => { e.currentTarget.style.color = "#e8eef2"; e.currentTarget.style.borderColor = "#00385a"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = "#7a909f"; e.currentTarget.style.borderColor = "#242f38"; }}
@@ -1286,7 +1287,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                 </div>
                 {String(artist.id) !== String(currentUser?.id) && /^\d+$/.test(String(artist.id)) && (
                   <button
-                    className="cat-pill"
+                    className="cat-pill hover-seguimiento"
                     onClick={(event) => {
                       event.stopPropagation();
                       onToggleFollow(String(artist.id), !isFollowing);

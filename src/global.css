@@ -195,21 +195,39 @@ body {
   background-color: var(--color-background);
 }
 
-.app-shell[data-theme="light"] .boton-nav:not(.active):hover,
-.app-shell[data-theme="light"] .cat-pill:not(.active):hover {
-  background: var(--color-surface-hover);
-}
-
 .app-shell[data-theme="light"] .tag-pill-btn {
   background: var(--color-surface);
   border-color: var(--color-border);
   color: var(--color-text);
 }
 
+.app-shell[data-theme="light"] .barra-navegacion button:not(.active):hover,
+.app-shell[data-theme="light"] .menu-hamburguesa button:hover:not(:disabled),
+.app-shell[data-theme="light"] .hover-seguimiento:hover:not(:disabled),
+.app-shell[data-theme="light"] .profile-edit-modal button:hover:not(:disabled),
+.app-shell[data-theme="light"] .profile-notifications button:hover:not(:disabled),
+.app-shell[data-theme="light"] .selection-actions button:hover:not(:disabled),
+.app-shell[data-theme="light"] .selection-toggle:hover:not(:disabled),
+.app-shell[data-theme="light"] .crear-pin-flow button:hover:not(:disabled),
 .app-shell[data-theme="light"] .tag-pill-btn:hover {
-  background: var(--color-surface-hover);
-  border-color: var(--color-border);
-  color: var(--color-text);
+  background: var(--color-surface-hover) !important;
+  border-color: #00385a !important;
+  color: var(--color-text) !important;
+  box-shadow: none !important;
+}
+
+.app-shell[data-theme="light"] .menu-hamburguesa button:hover:not(:disabled) {
+  opacity: 1 !important;
+}
+
+.app-shell[data-theme="light"] .menu-hamburguesa button:hover:not(:disabled) *,
+.app-shell[data-theme="light"] .hover-seguimiento:hover:not(:disabled) *,
+.app-shell[data-theme="light"] .profile-edit-modal button:hover:not(:disabled) *,
+.app-shell[data-theme="light"] .profile-notifications button:hover:not(:disabled) *,
+.app-shell[data-theme="light"] .selection-actions button:hover:not(:disabled) *,
+.app-shell[data-theme="light"] .selection-toggle:hover:not(:disabled) *,
+.app-shell[data-theme="light"] .crear-pin-flow button:hover:not(:disabled) * {
+  color: var(--color-text) !important;
 }
 
 .app-shell[data-theme="light"] [style*="background: rgb(19, 25, 29)"],

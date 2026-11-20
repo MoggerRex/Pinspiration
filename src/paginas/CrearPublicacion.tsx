@@ -926,7 +926,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#13191d", width: "100%" }}>
+    <div className="crear-pin-flow" style={{ minHeight: "100vh", background: "#13191d", width: "100%" }}>
       {/* Estilos globales unificados para los botones */}
       <style>{`
         .btn-primary {

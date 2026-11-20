@@ -41,7 +41,7 @@ export function MenuHamburguesa({ open, onClose, boards, history, onNavigate, on
       <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(3px)", zIndex: 1000, opacity: open ? 1 : 0, pointerEvents: open ? "all" : "none", transition: "opacity 0.3s ease" }} />
 
       {/* Panel del menú con zIndex superior para sobreponerse al header */}
-      <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: 300, maxWidth: "90vw", background: "#1a2228", borderRight: "1px solid #242f38", zIndex: 1001, transform: open ? "translateX(0)" : "translateX(-100%)", transition: "transform 0.32s cubic-bezier(0.4, 0, 0.2, 1)", display: "flex", flexDirection: "column", boxShadow: open ? "8px 0 40px rgba(0,0,0,0.5)" : "none" }}>
+      <div className="menu-hamburguesa" style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: 300, maxWidth: "90vw", background: "#1a2228", borderRight: "1px solid #242f38", zIndex: 1001, transform: open ? "translateX(0)" : "translateX(-100%)", transition: "transform 0.32s cubic-bezier(0.4, 0, 0.2, 1)", display: "flex", flexDirection: "column", boxShadow: open ? "8px 0 40px rgba(0,0,0,0.5)" : "none" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 20px 16px", borderBottom: "1px solid #242f38", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

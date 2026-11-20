@@ -133,7 +133,7 @@ export function Tableros({
 
           <button
             onClick={onBack}
-            className="cat-pill"
+            className="cat-pill hover-seguimiento"
             style={{
               display: "inline-flex",
               alignItems: "center",
