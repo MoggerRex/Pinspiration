@@ -28,6 +28,7 @@ export default function App() {
     const saved = localStorage.getItem("pinspiration_user");
     return saved ? JSON.parse(saved) : null;
   });
+  const [isLightMode, setIsLightMode] = useState(() => localStorage.getItem("pinspiration_theme") === "light");
 
   const [view, setView] = useState<View>("feed");
   const [search, setSearch] = useState("");
@@ -79,6 +80,12 @@ export default function App() {
   }, [artists]);
 
   const allPins = feedPins;
+
+  const toggleTheme = () => {
+    const next = !isLightMode;
+    localStorage.setItem("pinspiration_theme", next ? "light" : "dark");
+    setIsLightMode(next);
+  };
 
   const filteredPins = useMemo(() => {
     let pins = search.trim() ? searchablePins : feedPins;
@@ -681,7 +688,7 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#13191d", color: "#e8eef2" }}>
+    <div className="app-shell" data-theme={isLightMode ? "light" : "dark"} style={{ minHeight: "100vh", background: "var(--color-background)", color: "var(--color-text)" }}>
       <BarraNavegacion
         search={search}
         onSearch={(value) => {
@@ -717,6 +724,8 @@ export default function App() {
         boards={boards}
         history={history}
         user={user}
+        isLightMode={isLightMode}
+        onToggleTheme={toggleTheme}
         onNavigate={(v) => {
           setDrawerOpen(false);
           setView(v);

@@ -12,10 +12,12 @@ interface MenuHamburguesaProps {
   onNavigate: (view: View) => void;
   onArtists?: () => void;
   onLogout: () => void;
+  isLightMode: boolean;
+  onToggleTheme: () => void;
   user?: any;
 }
 
-export function MenuHamburguesa({ open, onClose, boards, history, onNavigate, onArtists, onLogout, user }: MenuHamburguesaProps) {
+export function MenuHamburguesa({ open, onClose, boards, history, onNavigate, onArtists, onLogout, isLightMode, onToggleTheme, user }: MenuHamburguesaProps) {
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -23,14 +25,14 @@ export function MenuHamburguesa({ open, onClose, boards, history, onNavigate, on
     return () => window.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
-  const menuItems: { view: string; icon: ReactNode; label: string; sub: string; highlight?: boolean; action?: string }[] = [
+  const menuItems: { view: string; icon: ReactNode; label: string; sub: string; highlight?: boolean; action?: "toggleTheme" }[] = [
     { view: "crear",     icon: <IconUpload />,   label: "Crear Pin",      sub: "Publica tu obra de arte", highlight: true },
     { view: "profile",   icon: <IconUser />,     label: "Mi perfil",      sub: "Tu cuenta y publicaciones"       },
     { view: "artists",   icon: <Users size={20} />, label: "Artistas",     sub: "Explora perfiles de artistas"     },
     { view: "boards",    icon: <IconBookmark />, label: "Mis tableros",   sub: `${boards.length} tableros guardados` },
     { view: "historial", icon: <IconHistory />,  label: "Historial",      sub: `${history.length} pines visitados`  },
     { view: "sobre",     icon: <IconInfo />,     label: "Sobre nosotros", sub: "Conoce nuestra misión"           },
-    { view: "sobre",     icon: <SunMoon />,      label: "Modo Claro/Oscuro", sub: "Cambiar entre modos"           },
+    { view: "sobre",     icon: <SunMoon />,      label: "Modo Claro/Oscuro", sub: `Activar modo ${isLightMode ? "oscuro" : "claro"}`, action: "toggleTheme" },
   ];
 
   return (
@@ -66,9 +68,11 @@ export function MenuHamburguesa({ open, onClose, boards, history, onNavigate, on
 
         {/* Ítems de navegación */}
         <nav style={{ padding: "12px", flex: 1, overflowY: "auto" }}>
-          {menuItems.map(({ view, icon, label, sub, highlight }) => (
-            <button key={label} onClick={() => {
-              if (view === "artists") {
+          {menuItems.map(({ view, icon, label, sub, highlight, action }) => (
+            <button key={label} aria-pressed={action === "toggleTheme" ? isLightMode : undefined} onClick={() => {
+              if (action === "toggleTheme") {
+                onToggleTheme();
+              } else if (view === "artists") {
                 onArtists?.();
               } else {
                 onNavigate(view as View);
