@@ -373,7 +373,22 @@ body {
   color: #ffffff !important;
 }
 
+.app-shell[data-theme="light"] .pin-action-button[data-action="save"]:hover:not(:disabled) {
+  background: #00385a !important;
+  color: #ffffff !important;
+}
+
+.app-shell[data-theme="light"] .pin-action-button[data-action="like"]:hover:not(:disabled) {
+  background: #771f2f !important;
+  color: #ffffff !important;
+}
+
 .app-shell[data-theme="light"] .pin-action-button[data-action="comment"]:hover:not(:disabled) * {
+  color: #ffffff !important;
+}
+
+.app-shell[data-theme="light"] .pin-action-button[data-action="save"]:hover:not(:disabled) *,
+.app-shell[data-theme="light"] .pin-action-button[data-action="like"]:hover:not(:disabled) * {
   color: #ffffff !important;
 }
 
@@ -384,6 +399,18 @@ body {
 .app-shell[data-theme="light"] .pin-detail-img-wrap .pin-detail-nav-btn:hover {
   background: var(--color-surface-hover) !important;
   border-color: #1a7abf !important;
+}
+
+.app-shell[data-theme="light"] .lightbox-close-button {
+  background: #ffffff !important;
+  border-color: #1a7abf !important;
+  color: var(--color-text) !important;
+}
+
+.app-shell[data-theme="light"] .lightbox-close-button:hover {
+  background: var(--color-surface-hover) !important;
+  border-color: #1a7abf !important;
+  color: var(--color-text) !important;
 }
 
 .app-shell[data-theme="light"] .pin-card .pin-info [style*="color: rgb(232, 238, 242)"],

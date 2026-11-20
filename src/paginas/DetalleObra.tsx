@@ -1068,6 +1068,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
               style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.88)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", animation: "fadeIn 0.2s ease" }}
             >
               <button
+                className="lightbox-close-button"
                 onClick={() => setLightbox(false)}
                 style={{ position: "fixed", top: 20, right: 20, width: 44, height: 44, borderRadius: "50%", background: "rgba(26,34,40,0.95)", border: "1px solid #242f38", color: "#e8eef2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 202, transition: "background 0.15s" }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "#242f38")}
