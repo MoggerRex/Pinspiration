@@ -110,6 +110,10 @@
   content: "";
 }
 
+.app-shell[data-theme="light"] .search-result-tab.active::after {
+  background: #00385a;
+}
+
 .search-container input {
   background: transparent;
   border: none;

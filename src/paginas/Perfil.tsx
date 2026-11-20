@@ -257,11 +257,11 @@ export function Perfil({
 
   if (!profileId) {
     return (
-      <div style={{ width: "100%", padding: "32px 24px", boxSizing: "border-box" }}>
-        <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 28, marginBottom: 24 }}>Artistas en Pinspiration</h2>
+      <div className="profile-page" style={{ width: "100%", padding: "32px 24px", boxSizing: "border-box" }}>
+        <h2 className="light-section-title" style={{ fontFamily: "'Playfair Display', serif", fontSize: 28, marginBottom: 24 }}>Artistas en Pinspiration</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 }}>
           {artists.map((a) => (
-            <div key={a.id} onClick={() => onSelectArtist(a.id)}
+            <div key={a.id} className="profile-artist-card" onClick={() => onSelectArtist(a.id)}
               style={{ background: "#1a2228", border: "1.5px solid #242f38", borderRadius: 16, padding: 20, cursor: "pointer", transition: "border-color 0.15s, transform 0.15s" }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#00385a"; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#242f38"; (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; }}
@@ -424,7 +424,7 @@ export function Perfil({
 
   if (followListType) {
     return (
-      <main style={{ minHeight: "100vh", padding: "28px 20px 60px", background: "#13191d", color: "#e8eef2" }}>
+      <main className="profile-page" style={{ minHeight: "100vh", padding: "28px 20px 60px", background: "#13191d", color: "#e8eef2" }}>
         <div style={{ maxWidth: 760, margin: "0 auto" }}>
           <button
             type="button"
@@ -457,6 +457,7 @@ export function Perfil({
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
               {followUsers.map((followUser) => (
                 <button
+                  className="profile-follow-card"
                   key={followUser.id}
                   type="button"
                   onClick={() => {
@@ -478,7 +479,7 @@ export function Perfil({
                     transition: "border-color 0.15s, transform 0.15s",
                   }}
                   onMouseEnter={(event) => {
-                    event.currentTarget.style.borderColor = "#00385a";
+                    event.currentTarget.style.borderColor = "#1a7abf";
                     event.currentTarget.style.transform = "translateY(-2px)";
                   }}
                   onMouseLeave={(event) => {
@@ -507,7 +508,7 @@ export function Perfil({
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#13191d" }}>
+    <div className="profile-page" style={{ minHeight: "100vh", background: "#13191d" }}>
       {/* Cabecera del Perfil estilo Móvil */}
       <div
         style={{
@@ -528,6 +529,7 @@ export function Perfil({
           />
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
             <h1
+              className={isWhiteHeader ? "profile-title-on-light" : "light-hero-title"}
               style={{
                 margin: 0,
                 fontFamily: "'Playfair Display', serif",
@@ -695,6 +697,7 @@ export function Perfil({
             <div style={{ display: "grid", gap: 10 }}>
               {notifications.map((notification) => (
                 <article
+                  className="profile-notification-card"
                   key={notification.notificacion_id}
                   role="button"
                   tabIndex={0}
@@ -740,6 +743,7 @@ export function Perfil({
                 >
                   <button
                     type="button"
+                    className="profile-notification-action profile-notification-name"
                     aria-label={`Ver perfil de ${notification.actor_nombre}`}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -771,6 +775,7 @@ export function Perfil({
                         <>
                           <button
                             type="button"
+                            className="profile-notification-action"
                             onClick={(event) => {
                               event.stopPropagation();
                               onSelectArtist(String(notification.actor_id));

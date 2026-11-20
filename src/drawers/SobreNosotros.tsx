@@ -13,7 +13,7 @@ interface SobreNosotrosProps {
 
 export function SobreNosotros({ onBack }: SobreNosotrosProps) {
   return (
-    <div style={{ minHeight: "100vh", background: "#13191d", width: "100%" }}>
+    <div className="about-page" style={{ minHeight: "100vh", background: "#13191d", width: "100%" }}>
       {/* Cabecera con degradado a todo el ancho */}
       <div
         style={{
@@ -33,6 +33,7 @@ export function SobreNosotros({ onBack }: SobreNosotrosProps) {
         >
           <div>
             <h1
+              className="light-hero-title"
               style={{
                 margin: "0 0 4px",
                 fontFamily: "'Playfair Display', serif",

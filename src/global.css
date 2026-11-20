@@ -203,7 +203,7 @@ body {
 
 .app-shell[data-theme="light"] .barra-navegacion button:not(.active):hover,
 .app-shell[data-theme="light"] .menu-hamburguesa button:hover:not(:disabled),
-.app-shell[data-theme="light"] .hover-seguimiento:hover:not(:disabled),
+.app-shell[data-theme="light"] .hover-seguimiento:not(.history-back-button):hover:not(:disabled),
 .app-shell[data-theme="light"] .profile-edit-modal button:hover:not(:disabled),
 .app-shell[data-theme="light"] .profile-notifications button:hover:not(:disabled),
 .app-shell[data-theme="light"] .selection-actions button:hover:not(:disabled),
@@ -221,13 +221,80 @@ body {
 }
 
 .app-shell[data-theme="light"] .menu-hamburguesa button:hover:not(:disabled) *,
-.app-shell[data-theme="light"] .hover-seguimiento:hover:not(:disabled) *,
+.app-shell[data-theme="light"] .hover-seguimiento:not(.history-back-button):hover:not(:disabled) *,
 .app-shell[data-theme="light"] .profile-edit-modal button:hover:not(:disabled) *,
 .app-shell[data-theme="light"] .profile-notifications button:hover:not(:disabled) *,
 .app-shell[data-theme="light"] .selection-actions button:hover:not(:disabled) *,
 .app-shell[data-theme="light"] .selection-toggle:hover:not(:disabled) *,
 .app-shell[data-theme="light"] .crear-pin-flow button:hover:not(:disabled) * {
   color: var(--color-text) !important;
+}
+
+.app-shell[data-theme="light"] .history-item:hover,
+.app-shell[data-theme="light"] .board-item:hover,
+.app-shell[data-theme="light"] .profile-notification-card:hover,
+.app-shell[data-theme="light"] .profile-artist-card:hover,
+.app-shell[data-theme="light"] .profile-follow-card:hover {
+  border-color: #1a7abf !important;
+}
+
+.app-shell[data-theme="light"] .profile-page button:hover:not(:disabled):not(.profile-notification-action) {
+  background: var(--color-surface-hover) !important;
+  border-color: #1a7abf !important;
+  color: var(--color-text) !important;
+  box-shadow: none !important;
+}
+
+.app-shell[data-theme="light"] .profile-page button:hover:not(:disabled):not(.profile-notification-action) * {
+  color: var(--color-text) !important;
+}
+
+.app-shell[data-theme="light"] .profile-notifications .profile-notification-action:hover:not(:disabled) {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+.app-shell[data-theme="light"] .profile-notifications .profile-notification-name:hover {
+  color: #1a7abf !important;
+}
+
+.app-shell[data-theme="light"] .light-hero-title {
+  color: #ffffff !important;
+}
+
+.app-shell[data-theme="light"] .light-section-title {
+  color: var(--color-text) !important;
+}
+
+.app-shell[data-theme="light"] .profile-title-on-light {
+  color: #111111 !important;
+}
+
+.app-shell[data-theme="light"] .search-result-tab.active::after {
+  background: #00385a !important;
+}
+
+.app-shell[data-theme="light"] .history-page .history-header {
+  background: var(--color-background) !important;
+}
+
+.app-shell[data-theme="light"] .history-page .history-title,
+.app-shell[data-theme="light"] .history-page .history-subtitle {
+  color: var(--color-secondary-text) !important;
+}
+
+.app-shell[data-theme="light"] .history-page .history-divider {
+  background: var(--color-border) !important;
+}
+
+.app-shell[data-theme="light"] .history-page .history-back-button:hover:not(:disabled) {
+  background: #00385a !important;
+  border-color: #1a7abf !important;
+  color: #ffffff !important;
+}
+
+.app-shell[data-theme="light"] .history-page .history-back-button:hover:not(:disabled) * {
+  color: #ffffff !important;
 }
 
 .app-shell[data-theme="light"] [style*="background: rgb(19, 25, 29)"],

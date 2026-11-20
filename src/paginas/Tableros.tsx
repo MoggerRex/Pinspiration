@@ -55,6 +55,7 @@ export function Tableros({
           <IconArrowLeft /> Mis tableros
         </button>
         <h2
+          className="light-section-title"
           style={{
             fontFamily: "'Playfair Display', serif",
             fontSize: 28,
@@ -96,7 +97,7 @@ export function Tableros({
 
   // Vista principal de todos los tableros (ancho completo como Perfil)
   return (
-    <div style={{ minHeight: "100vh", background: "#13191d", width: "100%" }}>
+    <div className="boards-page" style={{ minHeight: "100vh", background: "#13191d", width: "100%" }}>
       {/* Cabecera con degradado a todo el ancho */}
       <div
         style={{
@@ -116,6 +117,7 @@ export function Tableros({
         >
           <div>
             <h1
+              className="light-hero-title"
               style={{
                 margin: "0 0 4px",
                 fontFamily: "'Playfair Display', serif",
@@ -166,6 +168,7 @@ export function Tableros({
           {boards.map((b) => (
             <div
               key={b.id}
+              className="board-item"
               onClick={() => setSelected(b.id)}
               style={{
                 background: "#1a2228",
@@ -176,7 +179,7 @@ export function Tableros({
                 transition: "border-color 0.15s, transform 0.15s",
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.borderColor = "#00385a";
+                (e.currentTarget as HTMLElement).style.borderColor = "#1a7abf";
                 (e.currentTarget as HTMLElement).style.transform =
                   "translateY(-2px)";
               }}

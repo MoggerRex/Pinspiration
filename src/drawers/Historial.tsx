@@ -13,9 +13,10 @@ interface HistorialProps {
 
 export function Historial({ history, onSave, onPinClick, onBack }: HistorialProps) {
   return (
-    <div style={{ minHeight: "100vh", background: "#13191d", width: "100%" }}>
+    <div className="history-page" style={{ minHeight: "100vh", background: "#13191d", width: "100%" }}>
       {/* Cabecera con degradado a todo el ancho */}
       <div
+        className="history-header"
         style={{
           background: "linear-gradient(0deg, #13191d 5%, #00385a 100%)",
           paddingTop: 32,
@@ -33,6 +34,7 @@ export function Historial({ history, onSave, onPinClick, onBack }: HistorialProp
         >
           <div>
             <h1
+              className="history-title"
               style={{
                 margin: "0 0 4px",
                 fontFamily: "'Playfair Display', serif",
@@ -43,14 +45,14 @@ export function Historial({ history, onSave, onPinClick, onBack }: HistorialProp
             >
               Historial
             </h1>
-            <p style={{ margin: 0, color: "#7a909f", fontSize: 14 }}>
+            <p className="history-subtitle" style={{ margin: 0, color: "#7a909f", fontSize: 14 }}>
               Pines que abriste recientemente
             </p>
           </div>
 
           <button
             onClick={onBack}
-            className="cat-pill hover-seguimiento"
+            className="cat-pill hover-seguimiento history-back-button"
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -62,7 +64,7 @@ export function Historial({ history, onSave, onPinClick, onBack }: HistorialProp
             <span>Volver</span>
           </button>
         </div>
-        <div style={{ height: 1, background: "#242f38", marginTop: 8 }} />
+        <div className="history-divider" style={{ height: 1, background: "#242f38", marginTop: 8 }} />
       </div>
 
       {/* Lista del Historial a todo el ancho */}
@@ -82,6 +84,7 @@ export function Historial({ history, onSave, onPinClick, onBack }: HistorialProp
             {history.map((pin) => (
               <div
                 key={pin.id}
+                className="history-item"
                 onClick={() => onPinClick(pin)}
                 style={{
                   display: "flex",
@@ -94,7 +97,7 @@ export function Historial({ history, onSave, onPinClick, onBack }: HistorialProp
                   border: "1px solid #242f38",
                   transition: "border-color 0.15s",
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#00385a")}
+                onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#1a7abf")}
                 onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#242f38")}
               >
                 {esVideoMedia(pin.imgUrl) ? (
