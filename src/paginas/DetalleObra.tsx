@@ -442,6 +442,9 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentInput, setCommentInput] = useState("");
   const [commentsCount, setCommentsCount] = useState((pin as any).commentsCount ?? 0);
+  const hasUserComment = Boolean(
+    currentUser?.id && comments.some((comment) => String(comment.artistId) === String(currentUser.id))
+  );
   const [isSaved, setIsSaved] = useState(false);
   const [savesCount, setSavesCount] = useState(pin.saves);
   const [isLiked, setIsLiked] = useState(false);
@@ -1312,6 +1315,8 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
             <div style={{ display: "flex", gap: 10 }}>
               <button
                 className="pin-action-button"
+                data-action="save"
+                data-active={isSaved ? "true" : "false"}
                 onClick={handleToggleSaved}
                 disabled={interactionsLoading}
                 style={{
@@ -1350,6 +1355,8 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
 
               <button
                 className="pin-action-button"
+                data-action="like"
+                data-active={isLiked ? "true" : "false"}
                 onClick={handleToggleLike}
                 disabled={interactionsLoading}
                 style={{
@@ -1389,11 +1396,13 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
               {/* Botón Comentar que abre el Pop-Up */}
               <button
                 className="pin-action-button"
+                data-action="comment"
+                data-active={hasUserComment ? "true" : "false"}
                 onClick={() => setCommentsModalOpen(true)}
                 style={{
                   flex: 1,
                   background: "#1a2228",
-                  border: "1px solid #242f38",
+                  border: hasUserComment ? "1px solid #5d144e" : "1px solid #242f38",
                   borderRadius: 16,
                   padding: "14px 12px",
                   color: "#e8eef2",
@@ -1413,7 +1422,7 @@ export function DetalleObra({ pin, allPins, artistMap, currentUser, isFollowing,
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = "#1a2228";
-                  e.currentTarget.style.borderColor = "#242f38";
+                  e.currentTarget.style.borderColor = hasUserComment ? "#5d144e" : "#242f38";
                 }}
               >
                 <MessageCircle size={18} />

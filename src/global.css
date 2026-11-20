@@ -347,6 +347,31 @@ body {
   color: var(--color-text) !important;
 }
 
+.app-shell[data-theme="light"] .pin-action-button[data-action="save"][data-active="true"]:hover:not(:disabled),
+.app-shell[data-theme="light"] .pin-action-button[data-action="like"][data-active="true"]:hover:not(:disabled),
+.app-shell[data-theme="light"] .pin-action-button[data-action="comment"][data-active="true"]:hover:not(:disabled) {
+  color: #ffffff !important;
+}
+
+.app-shell[data-theme="light"] .pin-action-button[data-action="save"][data-active="true"]:hover:not(:disabled) {
+  background: #00385a !important;
+  border-color: #00385a !important;
+}
+
+.app-shell[data-theme="light"] .pin-action-button[data-action="like"][data-active="true"]:hover:not(:disabled) {
+  background: #771f2f !important;
+  border-color: #771f2f !important;
+}
+
+.app-shell[data-theme="light"] .pin-action-button[data-action="comment"][data-active="true"]:hover:not(:disabled) {
+  background: #5d144e !important;
+  border-color: #5d144e !important;
+}
+
+.app-shell[data-theme="light"] .pin-action-button[data-active="true"]:hover:not(:disabled) * {
+  color: #ffffff !important;
+}
+
 .app-shell[data-theme="light"] .pin-detail-img-wrap .pin-detail-nav-btn:hover {
   background: var(--color-surface-hover) !important;
   border-color: #1a7abf !important;
