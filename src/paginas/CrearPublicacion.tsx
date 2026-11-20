@@ -1145,7 +1145,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
               Selecciona tu imagen o video
             </h2>
             <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
-              Sube hasta 20 imágenes o videos. Las imágenes se optimizan; los MP4 pueden durar hasta 1 minuto y pesar 100 MB, y conservan su calidad original.
+              Sube hasta 20 imágenes o videos. Las imágenes se optimizan; los MP4 de hasta 1 minuto y 100 MB se recodifican a H.264, máximo 1080p y calidad CRF 24. Si el resultado supera 100 MB, se reducen también a 30 FPS y audio AAC a 128 kbps.
             </p>
             {uploadError && (
               <p role="alert" style={{ color: "#ff9b9b", fontSize: 13, margin: "0 0 16px" }}>

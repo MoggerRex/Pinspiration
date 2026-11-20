@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import multer from 'multer';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
+import { MAX_VIDEO_BYTES, optimizarVideo } from './utilidadesVideo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
@@ -367,7 +368,7 @@ const dbp = db.promise();
 
 const CATEGORIAS = ['2D', '3D', 'Fotografía', 'Edición'];
 const MAX_UPLOAD_IMAGE_BYTES = 15 * 1024 * 1024;
-const MAX_UPLOAD_VIDEO_BYTES = 100 * 1024 * 1024;
+const MAX_UPLOAD_VIDEO_BYTES = MAX_VIDEO_BYTES;
 const MAX_UPLOAD_RESOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_MODEL_BYTES = 50 * 1024 * 1024;
 
@@ -925,7 +926,7 @@ const guardarVideoArchivo = async (archivo, carpeta) => {
   await obtenerDuracionMp4(archivo.path);
   const nombre = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.mp4`;
   const destino = path.join(UPLOADS_DIR, carpeta, nombre);
-  await fs.promises.copyFile(archivo.path, destino);
+  await optimizarVideo(archivo.path, destino);
   return `/uploads/${carpeta}/${nombre}`;
 };
 
