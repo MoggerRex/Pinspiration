@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import type { Board, Pin, View } from "../tipos";
-import { IconUpload, IconUser, IconBookmark, IconHistory, IconInfo, IconX } from "../componentes/Iconos";
-import { SunMoon, LogOut, Users } from "lucide-react";
+import { IconUser, IconBookmark, IconHistory, IconInfo, IconX } from "../componentes/Iconos";
+import { SunMoon, LogOut, Users, SquarePlus } from "lucide-react";
 
 interface MenuHamburguesaProps {
   open: boolean;
@@ -25,8 +25,8 @@ export function MenuHamburguesa({ open, onClose, boards, history, onNavigate, on
     return () => window.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
-  const menuItems: { view: string; icon: ReactNode; label: string; sub: string; highlight?: boolean; action?: "toggleTheme" }[] = [
-    { view: "crear",     icon: <IconUpload />,   label: "Crear Pin",      sub: "Publica tu obra de arte", highlight: true },
+  const menuItems: { view: string; icon: ReactNode; label: string; sub: string; action?: "toggleTheme" }[] = [
+    { view: "crear",     icon: <SquarePlus size={20} />, label: "Crear Pin", sub: "Publica tu obra de arte" },
     { view: "profile",   icon: <IconUser />,     label: "Mi perfil",      sub: "Tu cuenta y publicaciones"       },
     { view: "artists",   icon: <Users size={20} />, label: "Artistas",     sub: "Explora perfiles de artistas"     },
     { view: "boards",    icon: <IconBookmark />, label: "Mis tableros",   sub: `${boards.length} tableros guardados` },
@@ -68,7 +68,7 @@ export function MenuHamburguesa({ open, onClose, boards, history, onNavigate, on
 
         {/* Ítems de navegación */}
         <nav style={{ padding: "12px", flex: 1, overflowY: "auto" }}>
-          {menuItems.map(({ view, icon, label, sub, highlight, action }) => (
+          {menuItems.map(({ view, icon, label, sub, action }) => (
             <button key={label} aria-pressed={action === "toggleTheme" ? isLightMode : undefined} onClick={() => {
               if (action === "toggleTheme") {
                 onToggleTheme();
@@ -78,16 +78,15 @@ export function MenuHamburguesa({ open, onClose, boards, history, onNavigate, on
                 onNavigate(view as View);
               }
             }}
-              style={{ width: "100%", background: highlight ? "linear-gradient(135deg,#00385a,#0a5a8a)" : "none", border: "none", borderRadius: 12, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, textAlign: "left", transition: "background 0.15s, opacity 0.15s", marginBottom: 4 }}
-              onMouseEnter={(e) => { if (!highlight) (e.currentTarget as HTMLElement).style.background = "#13191d"; else (e.currentTarget as HTMLElement).style.opacity = "0.85"; }}
-              onMouseLeave={(e) => { if (!highlight) (e.currentTarget as HTMLElement).style.background = "none"; else (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+              className="menu-item-button"
+              style={{ width: "100%", background: "none", border: "none", borderRadius: 12, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, textAlign: "left", transition: "background 0.15s", marginBottom: 4 }}
             >
-              <span style={{ color: highlight ? "#fff" : "#00385a", flexShrink: 0 }}>{icon}</span>
+              <span className="menu-item-icon" style={{ color: "#00385a", flexShrink: 0 }}>{icon}</span>
               <div>
-                <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: highlight ? "#fff" : "#e8eef2" }}>{label}</p>
-                <p style={{ margin: 0, fontSize: 12, color: highlight ? "#a0d0f0" : "#7a909f" }}>{sub}</p>
+                <p className="menu-item-label" style={{ margin: 0, fontWeight: 600, fontSize: 14, color: "#e8eef2" }}>{label}</p>
+                <p className="menu-item-sub" style={{ margin: 0, fontSize: 12, color: "#7a909f" }}>{sub}</p>
               </div>
-              <span style={{ marginLeft: "auto", color: highlight ? "#a0d0f0" : "#4a5e6a", fontSize: 18 }}>›</span>
+              <span className="menu-item-arrow" style={{ marginLeft: "auto", color: "#4a5e6a", fontSize: 18 }}>›</span>
             </button>
           ))}
         </nav>

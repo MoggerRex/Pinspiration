@@ -347,6 +347,20 @@ body {
   color: var(--color-text) !important;
 }
 
+.app-shell .menu-hamburguesa .menu-item-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #00385a, #0a5a8a) !important;
+}
+
+.app-shell .menu-hamburguesa .menu-item-button:hover:not(:disabled) .menu-item-icon,
+.app-shell .menu-hamburguesa .menu-item-button:hover:not(:disabled) .menu-item-label,
+.app-shell .menu-hamburguesa .menu-item-button:hover:not(:disabled) .menu-item-arrow {
+  color: #ffffff !important;
+}
+
+.app-shell .menu-hamburguesa .menu-item-button:hover:not(:disabled) .menu-item-sub {
+  color: #a0d0f0 !important;
+}
+
 .app-shell[data-theme="light"] .pin-action-button[data-action="save"][data-active="true"]:hover:not(:disabled),
 .app-shell[data-theme="light"] .pin-action-button[data-action="like"][data-active="true"]:hover:not(:disabled),
 .app-shell[data-theme="light"] .pin-action-button[data-action="comment"][data-active="true"]:hover:not(:disabled) {
