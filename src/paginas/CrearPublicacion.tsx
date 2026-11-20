@@ -5,7 +5,7 @@ import { extractColors, mockExif } from "../utilidadesImagen";
 import { optimizarImagen } from "../utilidadesCargaImagen";
 import { esVideoMedia, esVideoQuickTime, extraerFotogramasVideo, obtenerDuracionVideo, validarArchivoVideo } from "../utilidadesVideo";
 import { IconCheck, IconImage, IconZap } from "../componentes/Iconos";
-import { ArrowLeft, Upload, FileCheck, Plus, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ArrowLeft, Upload, FileCheck, Plus, ChevronLeft, ChevronRight, Trash2, QuestionMark } from "lucide-react";
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { API, fullUrl } from "../api";
@@ -1046,13 +1046,6 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
           box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
           cursor: pointer;
           transition: all 0.2s ease-in-out;
-        }
-        .video-help-question-mark {
-          display: block;
-          font-family: 'DM Sans', sans-serif;
-          font-size: 28px;
-          font-weight: 600;
-          line-height: 1;
         }
         .video-help-button:hover:not(:disabled) {
           background: #004d7a;
@@ -2332,7 +2325,7 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             aria-controls={videoHelpOpen ? "video-help-content" : undefined}
             onClick={() => setVideoHelpOpen((open) => !open)}
           >
-            <span className="video-help-question-mark" aria-hidden="true">?</span>
+            <QuestionMark size={28} strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
       </div>
