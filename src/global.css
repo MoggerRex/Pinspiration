@@ -368,6 +368,15 @@ body {
   border-color: #5d144e !important;
 }
 
+.app-shell[data-theme="light"] .pin-action-button[data-action="comment"]:hover:not(:disabled) {
+  background: #5d144e !important;
+  color: #ffffff !important;
+}
+
+.app-shell[data-theme="light"] .pin-action-button[data-action="comment"]:hover:not(:disabled) * {
+  color: #ffffff !important;
+}
+
 .app-shell[data-theme="light"] .pin-action-button[data-active="true"]:hover:not(:disabled) * {
   color: #ffffff !important;
 }
