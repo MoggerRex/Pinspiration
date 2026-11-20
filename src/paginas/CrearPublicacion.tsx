@@ -57,11 +57,14 @@ function agruparMediosRechazados(rechazadas: { imagen: number; razon: string; es
 
 export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublicacionProps) {
   const [step, setStep] = useState<CrearStep>("upload");
+  const [videoHelpOpen, setVideoHelpOpen] = useState(false);
   const [mediaList, setMediaList] = useState<string[]>([]);
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [uploadError, setUploadError] = useState("");
   const [convirtiendoVideo, setConvirtiendoVideo] = useState(false);
   const mediaObjectUrls = useRef(new Set<string>());
+  const videoHelpRef = useRef<HTMLDivElement>(null);
+  const videoHelpButtonRef = useRef<HTMLButtonElement>(null);
   const [activeMediaIdx, setActiveMediaIdx] = useState(0);
   const [colors, setColors] = useState<string[]>([]);
   const [exif, setExif] = useState<Record<string, string> | null>(null);
@@ -92,6 +95,29 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
   useEffect(() => () => {
     mediaObjectUrls.current.forEach((url) => URL.revokeObjectURL(url));
   }, []);
+
+  useEffect(() => {
+    if (!videoHelpOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !videoHelpRef.current?.contains(event.target)) {
+        setVideoHelpOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setVideoHelpOpen(false);
+        videoHelpButtonRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [videoHelpOpen]);
 
   const STEPS: CrearStep[] = ["upload", "processing", "ai", "form", "recursos", "publishing", "done"];
   const STEP_LABELS = ["Imagen", "Análisis", "IA", "Detalles", "Recursos", "Publicar", "¡Listo!"];
@@ -1000,6 +1026,81 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
           color: #e8eef2;
           border-color: #384754;
         }
+        .video-help-widget {
+          position: fixed;
+          right: 24px;
+          bottom: 24px;
+          z-index: 1200;
+        }
+        .video-help-button {
+          width: 38px;
+          height: 38px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+          border: 1px solid #242f38;
+          border-radius: 50%;
+          background: #242f38;
+          color: #ffffff;
+          box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+          cursor: pointer;
+          transition: all 0.2s ease-in-out;
+        }
+        .video-help-question-mark {
+          display: block;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 28px;
+          font-weight: 600;
+          line-height: 1;
+        }
+        .video-help-button:hover:not(:disabled) {
+          background: #004d7a;
+          border-color: #1a7abf;
+          box-shadow: 0 8px 22px rgba(0, 56, 90, 0.4);
+          transform: translateY(-1px);
+        }
+        .video-help-button:active:not(:disabled) {
+          transform: translateY(0);
+        }
+        .app-shell[data-theme="light"] .crear-pin-flow .video-help-button {
+          background: var(--color-surface);
+          border-color: var(--color-border);
+          color: var(--color-text);
+        }
+        .app-shell[data-theme="light"] .crear-pin-flow .video-help-button:hover:not(:disabled) {
+          background: #004d7a !important;
+          border-color: #1a7abf !important;
+          color: #ffffff !important;
+          box-shadow: 0 8px 22px rgba(0, 56, 90, 0.4) !important;
+        }
+        .app-shell[data-theme="light"] .crear-pin-flow .video-help-button:hover:not(:disabled) * {
+          color: #ffffff !important;
+        }
+        .video-help-popover {
+          position: absolute;
+          right: 0;
+          bottom: calc(100% + 12px);
+          width: min(360px, calc(100vw - 32px));
+          padding: 18px;
+          border: 1px solid var(--color-border);
+          border-radius: 16px;
+          background: var(--color-surface);
+          color: var(--color-text);
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+        }
+        .video-help-popover h2 {
+          margin: 0 0 8px;
+          font-family: 'Playfair Display', serif;
+          font-size: 17px;
+          line-height: 1.3;
+        }
+        .video-help-popover p {
+          margin: 0;
+          color: var(--color-secondary-text);
+          font-size: 13px;
+          line-height: 1.6;
+        }
       `}</style>
 
       {/* Cabecera */}
@@ -1170,9 +1271,6 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             >
               Selecciona tu imagen o video
             </h2>
-            <p style={{ color: "#7a909f", fontSize: 13, margin: "0 0 20px" }}>
-              Sube hasta 20 imágenes o videos. Los MOV de iPhone se convierten a MP4 antes de revisarlos; los videos de hasta 1 minuto y 100 MB se optimizan a H.264 (máximo 1080p, CRF 24). Si aún superan 100 MB, se reducen también a 30 FPS y AAC a 128 kbps.
-            </p>
             {convirtiendoVideo && (
               <p role="status" style={{ color: "#7a909f", fontSize: 13, margin: "0 0 16px" }}>
                 Convirtiendo el MOV a MP4 compatible para revisarlo...
@@ -2209,6 +2307,34 @@ export function CrearPublicacion({ onBack, onPublish, currentUser }: CrearPublic
             </button>
           </div>
         )}
+        <div className="video-help-widget" ref={videoHelpRef}>
+          {videoHelpOpen && (
+            <div
+              id="video-help-content"
+              className="video-help-popover"
+              role="dialog"
+              aria-modal="false"
+              aria-labelledby="video-help-title"
+            >
+              <h2 id="video-help-title">Información sobre videos</h2>
+              <p>
+                Sube hasta 20 imágenes o videos. Los MOV de iPhone se convierten a MP4 antes de revisarlos; los videos de hasta 1 minuto y 100 MB se optimizan a H.264 (máximo 1080p, CRF 24). Si aún superan 100 MB, se reducen también a 30 FPS y AAC a 128 kbps.
+              </p>
+            </div>
+          )}
+          <button
+            ref={videoHelpButtonRef}
+            className="video-help-button"
+            type="button"
+            aria-label={videoHelpOpen ? "Cerrar información sobre videos" : "Ayuda sobre videos"}
+            aria-expanded={videoHelpOpen}
+            aria-haspopup="dialog"
+            aria-controls={videoHelpOpen ? "video-help-content" : undefined}
+            onClick={() => setVideoHelpOpen((open) => !open)}
+          >
+            <span className="video-help-question-mark" aria-hidden="true">?</span>
+          </button>
+        </div>
       </div>
     </div>
   );
